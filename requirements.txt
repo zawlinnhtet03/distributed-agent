@@ -1,0 +1,9 @@
+google-adk
+google-genai
+litellm
+ollama
+opencv-python
+python-dotenv
+tavily-python
+fastapi
+uvicorn
