@@ -1,53 +1,224 @@
-# distributed-agent
+# Multi Agent Intelligence Research Hub
 
-Step-by-step setup and run guide for the distributed market/video analysis agents.
+A modular, distributed agent system built with Google ADK (Agent Development Kit), LiteLLM (Mistral), and Tavily Search.
 
-## 1) Prerequisites
-- Python 3.10+ and Git installed
-- Ollama installed and running (Windows: install from https://ollama.com/download; start the Ollama app or run `ollama serve`)
-- Pull the local vision model: `ollama pull moondream`
-- Groq API key (required), Tavily API key (required), Google API key (optional for future Google LLM usage)
+## Architecture
 
-## 2) Clone and install dependencies
+```
+Planner  ->  Aggregator  ->  Guardian
+
+Planner:
+- Produces a compact execution plan.
+
+Aggregator:
+- Delegates work to specialist agents.
+- Synthesizes results.
+
+Guardian:
+- Final safety pass (PII/sensitive-topic checks + safe formatting).
+```
+
+## Project Structure
+
+```
+google-adk/
+├── agent.py                 # ADK web entry point
+├── pyproject.toml           # Project dependencies
+├── requirements.txt         # Alternative dependency list
+├── .env                     # Environment variables (create from .env.example)
+├── app/
+│   ├── __init__.py
+│   ├── config.py            # Settings management
+│   ├── model_factory.py     # LiteLLM configuration + retry/backoff
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── base_agent.py    # Shared agent utilities
+│   │   ├── planner.py        # Step 1
+│   │   ├── aggregator.py     # Step 2
+│   │   ├── guardian.py       # Step 3
+│   │   ├── data.py           # Data/EDA tools
+│   │   ├── rag.py            # Knowledge base retrieval
+│   │   ├── scraper.py        # Web search (Tavily)
+│   │   └── video.py          # Local video analysis
+│   └── tools/
+│       ├── __init__.py
+│       ├── data_tools.py
+│       ├── rag_tools.py
+│       ├── tavily_tool.py
+│       ├── tavily_search.py
+│       └── video_tools.py
+```
+
+## Quick Start
+
+### 1. Install Dependencies
+
 ```bash
-git clone <repo-url>
-cd distributed-agent
-python -m venv .venv
-.venv\Scripts\activate  # Windows PowerShell
+# Using uv (recommended)
+uv sync
+
+# Or with pip
+pip install -e .
+
+# Or install from requirements.txt
 pip install -r requirements.txt
 ```
 
-## 3) Environment variables
-Create a `.env` file in the project root:
+### 2. Configure Environment
+
 ```bash
-GROQ_API_KEY="your_groq_key"          # required (LiteLlm via Groq)
-TAVILY_API_KEY="your_tavily_key"      # required (web search)
-GOOGLE_API_KEY="your_google_key"      # optional (if you switch to Gemini)
+# Copy example env file
+cp .env.example .env
+
+# Edit .env with your API keys
+# - MISTRAL_API_KEY: Get from https://console.mistral.ai/
+# - TAVILY_API_KEY: Get from https://tavily.com
+# - GROQ_API_KEY: Optional (legacy)
+
+# Optional reliability tuning (defaults are fine)
+# - LLM_NUM_RETRIES
+# - LLM_RETRY_BASE_DELAY_S
+# - LLM_RETRY_MAX_DELAY_S
 ```
 
-## 4) Start the agent shards
-Open two terminals (activate the venv in each):
-- Scraping shard (ports to 8001):
-	```bash
-	python scraper.py
-	```
-- Video shard (ports to 8002):
-	```bash
-	python video.py
-	```
+### 3. Run with ADK Web
 
-## 5) Run the orchestrator UI (ADK Web)
-From the project root in a new terminal (venv activated):
 ```bash
+# Start the visual debugger
 adk web .
+
+# Or explicitly specify the agent file
+adk web agent.py
 ```
-This loads the ADK web console, which connects to the two running shards via their A2A endpoints.
 
-## 6) Running the scripts directly
-- To re-run only the web scraping flow (without the UI), keep `scraper.py` running and send requests to `http://localhost:8001/.well-known/agent-card.json` via your own orchestrator or tests.
-- To re-run only the video analysis locally, run `python video.py` and ensure `ollama serve` is running with the `moondream` model pulled.
+### 4. Access the Interface
 
-## 7) Notes and tips
-- The LiteLlm model is set to `openai/llama-3.1-8b-instant` for scraping and `openai/meta-llama/llama-4-scout-17b-16e-instruct` for video summarization. You can switch models in `scraper.py` and `video.py` if needed.
-- If OpenCV fails to open a video, check the codec or try re-encoding the file.
-- If Tavily limits are hit, lower `max_results` or reduce queries inside `scraper.py`.
+Open your browser to `http://localhost:8000` to interact with the agent system through ADK's visual debugger.
+
+## Running the Custom UI (Next.js) + API Backend (FastAPI)
+
+This repo includes a custom dashboard UI in `frontend/` that talks to a FastAPI backend in `app/api_server.py`.
+
+### 1) Start the API backend
+
+The UI expects the backend to run on port `8001` by default.
+
+```bash
+python -m app.api_server
+```
+
+You can change host/port via:
+
+```bash
+set ADK_BACKEND_HOST=127.0.0.1
+set ADK_BACKEND_PORT=8001
+python -m app.api_server
+```
+
+### 2) Start the UI
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+### 3) UI → Backend configuration
+
+The Next.js UI proxies streaming requests to the backend using the environment variable:
+
+- `ADK_API_URL` (server-side in Next.js). Default: `http://localhost:8001`
+
+Optional:
+
+- `NEXT_PUBLIC_PERSIST_SESSIONS` (`true`/`false`) enables local conversation history persistence.
+
+If you run the backend on a different host/port, set `ADK_API_URL` in `frontend/.env.local`.
+
+## UI Features
+
+### Simple View
+
+- Sends requests to `/api/adk/run-sse` (SSE streaming)
+- Displays per-agent status + logs
+- Captures shared monitoring state in `localStorage` while a task is running
+
+### Advanced View (Monitoring)
+
+- Opened from Simple View and receives `session` in the URL query
+- Polls shared monitoring state from `localStorage` to show live agent status/logs
+
+### Data Agent Artifacts (Tables + Charts)
+
+The Data Agent tools can emit renderable artifacts in the agent stream using a marker line:
+
+- `ADK_ARTIFACT:{...json...}`
+
+Artifacts supported:
+
+- Table previews (rendered as HTML tables in the UI)
+- Plotly charts rendered inline in the UI (no chart HTML files are required)
+
+Note: Inline charts load Plotly from the CDN at runtime.
+
+## ModelFactory Usage
+
+The `ModelFactory` class provides a clean interface for creating LiteLLM-configured models.
+
+```python
+from app.model_factory import ModelFactory
+from google.adk.agents import LlmAgent
+
+model = ModelFactory.create()
+fast_model = ModelFactory.create(tier="fast")
+
+agent = LlmAgent(
+    name="my_agent",
+    model=model,
+    instruction="Your instruction here",
+)
+```
+
+## Adding New Agents
+
+1. Create a new file in `app/agents/`:
+
+```python
+# app/agents/my_agent.py
+from app.agents.base_agent import create_agent
+
+MY_AGENT_INSTRUCTION = """Your agent instructions..."""
+
+my_agent = create_agent(
+    name="my_agent",
+    instruction=MY_AGENT_INSTRUCTION,
+    description="What this agent does",
+    tools=[],  # Add tools if needed
+    tier="default",
+    temperature=0.5,
+)
+```
+
+2. Register in `app/agents/__init__.py`
+3. Add as sub-agent to orchestrator if needed
+
+## Available Models
+
+| Tier | Model | Use Case |
+|------|-------|----------|
+| `default` | `mistral/mistral-medium-latest` | Complex reasoning, orchestration |
+| `fast` | `mistral/mistral-small-latest` | Quick responses, simple tasks |
+
+## Data Files (important for UI uploads)
+
+The data agent can only operate on files that exist on disk inside this repo.
+
+- Put CSV/Excel files in `datasets/` (recommended) so `list_data_files()` can discover them.
+- ADK Web uploads are treated as session artifacts and are not guaranteed to be written into `datasets/` automatically.
+- When building your custom UI, save uploads to `datasets/` to make them immediately usable by the data tools.
+
+## License
+
+MIT
