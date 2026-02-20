@@ -32,6 +32,7 @@ def create_agent(
     tier: str = "default",
     temperature: float | None = None,
     output_schema: type[BaseModel] | None = None,
+    **extra_kwargs: Any,
 ) -> LlmAgent:
     """
     Create a standardized LlmAgent with Groq configuration.
@@ -48,6 +49,7 @@ def create_agent(
         tier: Model tier ("default" or "fast")
         temperature: Override default temperature
         output_schema: Optional Pydantic model for structured output
+        extra_kwargs: Additional LlmAgent kwargs (callbacks, output_key, etc.)
 
     Returns:
         Configured LlmAgent instance
@@ -69,5 +71,8 @@ def create_agent(
 
     if output_schema:
         agent_kwargs["output_schema"] = output_schema
+
+    if extra_kwargs:
+        agent_kwargs.update(extra_kwargs)
 
     return LlmAgent(**agent_kwargs)

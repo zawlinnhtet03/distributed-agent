@@ -1,54 +1,146 @@
 """
-Video Agent - Local Video Analysis
+Video Agent - Local video analysis.
 
-Fast, simple video analysis using:
-1. OpenCV for frame extraction (3 key frames at 20%, 50%, 80%)
-2. Ollama Moondream for vision analysis
-3. In-memory processing (no disk I/O)
-
-Only 3 tools — list, analyze by path, or analyze by filename.
+This agent uses deterministic pre-model routing for Groq compatibility.
 """
+
+from __future__ import annotations
+
+import re
+
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
 
 from app.agents.base_agent import create_agent
-from app.tools.video_tools import (
-    list_videos,
-    analyze_video_locally,
-    analyze_uploaded_video,
-)
+from app.tools.video_tools import analyze_uploaded_video, analyze_video_locally, list_videos
+from common.adk_text_sanitizer import force_text_only_model_input
 
 
-VIDEO_INSTRUCTION = """You are the Video Agent - an expert at analyzing video content using local computer vision (OpenCV + Ollama moondream).
+VIDEO_INSTRUCTION = """You are the Video Agent, specialized in local video analysis.
 
-WORKFLOW:
-1. If user mentions a SPECIFIC filename (e.g. "analyze nutrion.mp4"):
-   → Call `analyze_uploaded_video(filename="nutrion.mp4")`
-
-2. If user says "analyze this video" or "analyze the video" WITHOUT a filename:
-   → Call `analyze_uploaded_video()` with no arguments
-   → If multiple videos exist, the tool returns a list — relay it to the user
-
-3. If user asks "what videos are available" or you need to check:
-   → Call `list_videos()`
-
-4. If user provides a full file path:
-   → Call `analyze_video_locally(video_path="<the full path>")`
-
-RULES:
-- NEVER default to test.mp4 unless the user specifically asks for it
-- When multiple videos are found and no filename specified, show the list and ask
-- Return the tool's output directly in a clear, formatted way
-- Don't ask for confirmation — just analyze what the user requested
+Workflow:
+1. If user provides a full video path, analyze that path.
+2. If user mentions a specific filename like sample.mp4, analyze by filename.
+3. If user asks for available videos, list videos.
+4. If user says "analyze this video" without a filename, analyze uploaded video automatically.
 """
+
+
+_VIDEO_EXT = r"(?:mp4|mov|avi|mkv|webm)"
+
+
+def _extract_latest_user_text(llm_request) -> str:
+    if llm_request is None or not getattr(llm_request, "contents", None):
+        return ""
+    fallback = ""
+    for content in reversed(llm_request.contents):
+        parts = getattr(content, "parts", None) or []
+        chunks: list[str] = []
+        for part in parts:
+            text_val = getattr(part, "text", None)
+            if text_val:
+                chunks.append(text_val)
+        merged = " ".join(chunks).strip()
+        role = getattr(content, "role", None)
+        if role == "user" and merged:
+            return merged
+        if merged and not fallback:
+            fallback = merged
+    if fallback:
+        return fallback
+    return ""
+
+
+def _extract_video_path(text: str) -> str:
+    if not text:
+        return ""
+
+    tagged_path = re.search(rf"Path:\s*([^\r\n]+\.{_VIDEO_EXT})", text, flags=re.IGNORECASE)
+    if tagged_path:
+        return tagged_path.group(1).strip().strip("\"'")
+
+    quoted_path = re.search(rf"[\"']([^\"']+\.{_VIDEO_EXT})[\"']", text, flags=re.IGNORECASE)
+    if quoted_path:
+        return quoted_path.group(1)
+
+    file_uri = re.search(r"(file://[^\s\"'<>]+)", text, flags=re.IGNORECASE)
+    if file_uri:
+        return file_uri.group(1)
+
+    windows_path = re.search(
+        rf"([A-Za-z]:[\\/][^\s\"'<>]+\.{_VIDEO_EXT})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if windows_path:
+        return windows_path.group(1)
+
+    posix_path = re.search(
+        rf"((?:/|\.?/)[^\s\"'<>]+\.{_VIDEO_EXT})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if posix_path:
+        return posix_path.group(1)
+
+    return ""
+
+
+def _extract_video_filename(text: str) -> str:
+    if not text:
+        return ""
+    match = re.search(rf"([A-Za-z0-9._-]+\.{_VIDEO_EXT})", text, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _direct_video_before_model(*args, **kwargs):
+    """
+    Run video analysis deterministically before model call to avoid
+    provider-specific tool-calling parse issues.
+    """
+    callback_context = kwargs.get("callback_context") if kwargs else None
+    llm_request = kwargs.get("llm_request") if kwargs else None
+
+    if callback_context is None and len(args) >= 1:
+        callback_context = args[0]
+    if llm_request is None and len(args) >= 2:
+        llm_request = args[1]
+
+    force_text_only_model_input(callback_context=callback_context, llm_request=llm_request)
+    user_text = _extract_latest_user_text(llm_request)
+    if not user_text and callback_context is not None:
+        user_text = str(callback_context.state.get("sanitized_request", "")).strip()
+    lowered = user_text.lower()
+
+    path = _extract_video_path(user_text)
+    filename = _extract_video_filename(user_text)
+
+    if path:
+        tool_output = analyze_video_locally(video_path=path)
+    elif filename:
+        tool_output = analyze_uploaded_video(filename=filename)
+    elif any(token in lowered for token in ("what videos", "list videos", "available videos")):
+        tool_output = list_videos()
+    else:
+        tool_output = analyze_uploaded_video()
+
+    if callback_context is not None:
+        callback_context.state["video_tool_output"] = tool_output
+
+    return LlmResponse(
+        content=types.Content(
+            role="model",
+            parts=[types.Part.from_text(text=tool_output)],
+        )
+    )
+
 
 video_agent = create_agent(
     name="video",
     instruction=VIDEO_INSTRUCTION,
-    description="Analyzes local video files using Ollama Moondream (3 key frames, fast)",
-    tools=[
-        list_videos,
-        analyze_video_locally,
-        analyze_uploaded_video,
-    ],
+    description="Analyzes local video files using OpenCV and Ollama",
+    tools=[list_videos, analyze_video_locally, analyze_uploaded_video],
     tier="default",
     temperature=0.3,
+    before_model_callback=_direct_video_before_model,
 )

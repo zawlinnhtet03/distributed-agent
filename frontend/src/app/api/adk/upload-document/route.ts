@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const ADK_API_URL = process.env.ADK_API_URL || "http://localhost:8001";
+
 export async function POST(req: NextRequest) {
   try {
-    // Get the form data from the request
     const formData = await req.formData();
     
-    // Forward to RAG agent
-    const res = await fetch("http://localhost:8003/upload", {
+    const res = await fetch(`${ADK_API_URL}/kb/upload`, {
       method: "POST",
       body: formData,
     });
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const errorText = await res.text();
       return NextResponse.json(
-        { success: false, error: `RAG agent error: ${errorText}` },
+        { success: false, error: `Backend error: ${errorText}` },
         { status: res.status }
       );
     }
@@ -30,9 +30,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
-export const config = {
-  api: {
-    bodyParser: false, // Required for handling file uploads
-  },
-};

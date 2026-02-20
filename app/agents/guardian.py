@@ -5,12 +5,15 @@ Reviews outputs for safety, accuracy, and policy compliance before
 delivering to users. Acts as the final quality gate in the pipeline.
 """
 
+from __future__ import annotations
+
 import re
 from urllib.parse import urlparse
 
 from app.agents.base_agent import create_agent
-from app.model_factory import ModelFactory
-from google.adk.agents import LlmAgent
+from common.adk_text_sanitizer import force_text_only_model_input
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
 
 
 # PII patterns (reduced set)
@@ -40,6 +43,9 @@ _DISCLAIMERS: dict[str, str] = {
     "legal": "\n\n> **Legal Disclaimer:** For general reference only. Consult a qualified attorney.",
     "general": "\n\n---\n*Information provided for reference. Verify from primary sources.*",
 }
+
+
+_URL_RE = re.compile(r"https?://[^\s<>\"]+")
 
 
 # Tool 1: check_content_safety
@@ -151,6 +157,103 @@ def format_safe_response(content: str, disclaimer_type: str = "auto", redact_pii
     }
 
 
+def _extract_latest_user_text(llm_request) -> str:
+    if llm_request is None or not getattr(llm_request, "contents", None):
+        return ""
+    fallback = ""
+    for content in reversed(llm_request.contents):
+        parts = getattr(content, "parts", None) or []
+        chunks: list[str] = []
+        for part in parts:
+            text_val = getattr(part, "text", None)
+            if text_val:
+                chunks.append(text_val)
+        merged = " ".join(chunks).strip()
+        role = getattr(content, "role", None)
+        if role == "user" and merged:
+            return merged
+        if merged and not fallback:
+            fallback = merged
+    if fallback:
+        return fallback
+    return ""
+
+
+def _extract_urls(text: str) -> list[str]:
+    if not text:
+        return []
+    return _URL_RE.findall(text)
+
+
+def _guardian_pre_before_model(*args, **kwargs):
+    """
+    Deterministically sanitize user input before delegation.
+    Avoids provider function-calling parse failures.
+    """
+    callback_context = kwargs.get("callback_context") if kwargs else None
+    llm_request = kwargs.get("llm_request") if kwargs else None
+
+    if callback_context is None and len(args) >= 1:
+        callback_context = args[0]
+    if llm_request is None and len(args) >= 2:
+        llm_request = args[1]
+
+    force_text_only_model_input(callback_context=callback_context, llm_request=llm_request)
+
+    user_text = _extract_latest_user_text(llm_request)
+    safety = check_content_safety(user_text)
+    formatted = format_safe_response(content=user_text, disclaimer_type="none", redact_pii=True)
+    sanitized = formatted.get("formatted_content", user_text)
+
+    if callback_context is not None:
+        callback_context.state["sanitized_request"] = sanitized
+        callback_context.state["guardian_pre_safety"] = safety
+
+    return LlmResponse(
+        content=types.Content(
+            role="model",
+            parts=[types.Part.from_text(text=sanitized)],
+        )
+    )
+
+
+def _guardian_before_model(*args, **kwargs):
+    """
+    Deterministically perform final safety pass on synthesized output.
+    Avoids provider function-calling parse failures.
+    """
+    callback_context = kwargs.get("callback_context") if kwargs else None
+    llm_request = kwargs.get("llm_request") if kwargs else None
+
+    if callback_context is None and len(args) >= 1:
+        callback_context = args[0]
+    if llm_request is None and len(args) >= 2:
+        llm_request = args[1]
+
+    force_text_only_model_input(callback_context=callback_context, llm_request=llm_request)
+
+    content = _extract_latest_user_text(llm_request)
+    safety = check_content_safety(content)
+    urls = _extract_urls(content)
+    source_quality = validate_sources(urls) if urls else {"overall_quality": "none"}
+    formatted = format_safe_response(content=content, disclaimer_type="auto", redact_pii=True)
+    final_text = formatted.get("formatted_content", content)
+
+    if callback_context is not None:
+        callback_context.state["guardian_review"] = {
+            "safety": safety,
+            "source_quality": source_quality,
+            "formatting": formatted,
+        }
+
+    return LlmResponse(
+        content=types.Content(
+            role="model",
+            parts=[types.Part.from_text(text=final_text)],
+        )
+    )
+
+
 # Guardian Agent Definition
 GUARDIAN_INSTRUCTION = """You are the Guardian Agent - the final safety gate.
 
@@ -176,6 +279,7 @@ guardian_agent = create_agent(
     tools=[check_content_safety, validate_sources, format_safe_response],
     tier="default",
     temperature=0.1,
+    before_model_callback=_guardian_before_model,
 )
 
 
@@ -199,11 +303,13 @@ Rules:
 """
 
 
-guardian_pre_agent = LlmAgent(
+guardian_pre_agent = create_agent(
     name="guardian_pre",
-    model=ModelFactory.create(tier="default", temperature=0.1),
     instruction=GUARDIAN_PRE_INSTRUCTION,
     description="Sanitizes the user request (PII redaction) before delegation",
     tools=[check_content_safety, format_safe_response],
+    tier="default",
+    temperature=0.1,
     output_key="sanitized_request",
+    before_model_callback=_guardian_pre_before_model,
 )

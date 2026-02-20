@@ -55,7 +55,7 @@ export default function KnowledgeBasePage() {
       try {
         const [statsRes, docsRes] = await Promise.all([
           fetch("/api/adk/kb-stats-direct"),
-          fetch("http://localhost:8003/documents"),
+          fetch("/api/adk/kb-documents"),
         ]);
         
         if (statsRes.ok) {
@@ -118,7 +118,7 @@ export default function KnowledgeBasePage() {
       if (res.ok && data.success) {
         setUploadStatus({ loading: false, message: `✓ Added ${data.chunks_created} chunks from ${data.filename}`, success: true });
         // Refresh documents
-        const docsRes = await fetch("http://localhost:8003/documents");
+        const docsRes = await fetch("/api/adk/kb-documents");
         if (docsRes.ok) {
           const docsData = await docsRes.json();
           setDocuments(docsData.documents || []);

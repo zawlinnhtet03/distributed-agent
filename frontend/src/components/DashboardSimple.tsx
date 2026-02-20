@@ -1379,10 +1379,11 @@ export default function DashboardSimple() {
                     );
                   }
 
-                  console.warn("[Artifacts] Unknown artifact kind:", a.kind, "at index", idx, a);
+                  const unknownKind = (a as any)?.kind ?? "unknown";
+                  console.warn("[Artifacts] Unknown artifact kind:", unknownKind, "at index", idx, a);
                   return (
                     <div key={idx} className="rounded-xl border border-yellow-400/30 bg-yellow-400/10 px-4 py-3 text-sm text-yellow-200">
-                      Unknown artifact type: {(a as any).kind}
+                      Unknown artifact type: {unknownKind}
                     </div>
                   );
                 })}

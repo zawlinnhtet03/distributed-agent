@@ -39,6 +39,9 @@ DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "datasets",
 )
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 
 def _posix(path: str) -> str:
@@ -47,16 +50,19 @@ def _posix(path: str) -> str:
 
 
 def _get_project_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return PROJECT_ROOT
 
 
 def _resolve_path(file_path: str) -> str | None:
     """Find data file across multiple locations."""
     file_path = file_path.replace("/", os.sep).replace("\\", os.sep)
 
-    for base in [file_path, os.path.join(DATA_DIR, file_path),
-                 os.path.join(_get_project_root(), file_path),
-                 os.path.join(os.getcwd(), file_path)]:
+    for base in [
+        file_path,
+        os.path.join(DATA_DIR, file_path),
+        os.path.join(_get_project_root(), file_path),
+        os.path.join(os.getcwd(), file_path),
+    ]:
         if os.path.isfile(base):
             return _posix(os.path.abspath(base))
 
@@ -69,14 +75,29 @@ def _resolve_path(file_path: str) -> str | None:
 
 def _read_dataframe(file_path: str) -> pd.DataFrame:
     path = Path(file_path)
-    if path.suffix.lower() in {".xlsx", ".xls"}:
+    suffix = path.suffix.lower()
+    if suffix not in set(DATA_EXTENSIONS):
+        raise ValueError(
+            f"Unsupported data file extension: '{suffix or 'none'}'. "
+            f"Supported: {', '.join(DATA_EXTENSIONS)}"
+        )
+    if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path)
     for enc in ["utf-8", "utf-8-sig", "cp1252", "latin1"]:
         try:
             return pd.read_csv(path, sep=None, engine="python", encoding=enc)
         except Exception:
             continue
-    return pd.read_csv(path, sep="\t", engine="python", encoding="latin1", errors="replace")
+    try:
+        return pd.read_csv(
+            path,
+            sep="\t",
+            engine="python",
+            encoding="latin1",
+            encoding_errors="replace",
+        )
+    except TypeError:
+        return pd.read_csv(path, sep="\t", engine="python", encoding="latin1")
 
 
 def list_data_files() -> str:

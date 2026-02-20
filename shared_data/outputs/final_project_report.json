@@ -1,0 +1,335 @@
+{
+  "project": "Sharded Multi-Agent Retrieval System",
+  "generated_at_epoch": 1771060770,
+  "stages": {
+    "scout_actors": {
+      "video_scout_count": 3,
+      "image_scout_count": 3,
+      "video_paths": [
+        "shared_data/videos/Video2.MP4",
+        "shared_data/videos/Video3.MP4",
+        "shared_data/videos/test.mp4"
+      ]
+    },
+    "analyst_actors": {
+      "processed_videos": 3,
+      "results": [
+        {
+          "video_id": "Video2_001",
+          "video_path": "shared_data/videos/Video2.MP4",
+          "transcript": " The farmer and his three sons. Once upon a time there was a farmer who had three sons. The three brothers always used to fight with each other, so one day the wise farmer called his sons and gave them a bundle of sticks. He said, try to break this bundle. The three sons tried their best, but they couldn't break it. Then the farmer untied the bundle and gave them one stick each. They easily broke the sticks, but when they tried to put them back together, they couldn't. The farmer said, as long as you stay united, no one can defeat you. But if you remain divided, anyone can break you easily. The sons realized their mistake and started working together. They tilled the field and planted crops, and soon they became the most successful farmers in the village. Moral. Unity is strength. Unity.",
+          "summary": "[Video2_001] source=docker_compose; transcript=The farmer and his three sons. Once upon a time there was a farmer who had three sons. The three brothers always used to fight with each other, so one day the wise farmer called his sons and gave them a bundle of sticks....",
+          "embedding_size": 32
+        },
+        {
+          "video_id": "Video3_002",
+          "video_path": "shared_data/videos/Video3.MP4",
+          "transcript": "昔のお話です あるところにおじいさんとおばあさんがいましたとても仲良く暮らしていましたが 二人には子どもがいませんでしたどうか子どもをさじけください どうぞ子どもにおじいさんとおばあさんは毎日毎日 神様にお祈りしていましたそして歩き 願いがかなって赤ちゃんが生まれましたそれは大人の親指ほどの小さな小さな男の子でしたおぉなんとかわいらしい赤子じゃ 神様のおかげんじゃいよかったのおじいさんこのかわい子は一旋号人のじけられました 一旋号氏はすぐすぐと育ちの山をかけまわる元気な子になりましたところがあんまり体が小さいので 村の子どもたちとは一緒に遊べませんこんなにご飯食べてるのに 大きくならねたあ不思議だの元気で育っているんですね つもどいいじゃありませんかこのままであの子は幸せになれるんじゃろうか そんなある日のことおじいさんおばあさんお願いがありますこここれほしいあ 改まっていたいどうしたのじゃ私を宮口へ行かせてください 広い世の中を見ていろいろ学んで立派な人になりたいんです",
+          "summary": "[Video3_002] source=docker_compose; transcript=昔のお話です あるところにおじいさんとおばあさんがいましたとても仲良く暮らしていましたが 二人には子どもがいませんでしたどうか子どもをさじけください どうぞ子どもにおじいさんとおばあさんは毎日毎日 神様にお祈りしていましたそして歩き 願いがかなって赤ちゃんが生まれましたそれは大人の親指ほどの小さな小さな男の子でしたおぉなんとかわいらしい赤子じゃ 神様のおかげんじゃいよかったのおじいさんこのかわい子は一旋号人のじけられました 一旋号氏はす...",
+          "embedding_size": 32
+        },
+        {
+          "video_id": "test_003",
+          "video_path": "shared_data/videos/test.mp4",
+          "transcript": " opinion",
+          "summary": "[test_003] source=docker_compose; transcript=opinion",
+          "embedding_size": 32
+        }
+      ]
+    },
+    "router_ingest": {
+      "points_prepared": 6,
+      "upsert_response": {
+        "status": "ok",
+        "shards_written": {
+          "shard1": 2,
+          "shard2": 1,
+          "shard3": 3
+        },
+        "warnings": []
+      }
+    },
+    "retrieval": {
+      "targeted": {
+        "mode": "targeted",
+        "shards_queried": [
+          "shard1"
+        ],
+        "took_ms": 125,
+        "results": [
+          {
+            "id": "8ab29eb8-aed2-56fb-a2ed-fe1739287596",
+            "score": 1.0,
+            "payload": {
+              "global_id": "video_Video2_001",
+              "video_id": "Video2_001",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1771061057,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 1000,
+              "source_url": "file://shared_data/videos/Video2.MP4",
+              "brand_tags": [
+                "demo",
+                "local"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "6976b8d1-7cb7-5140-bfd4-fbdc9f7bf129",
+            "score": -0.009522913,
+            "payload": {
+              "global_id": "video_test_003",
+              "video_id": "test_003",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1771060937,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 3000,
+              "source_url": "file://shared_data/videos/test.mp4",
+              "brand_tags": [
+                "demo",
+                "local"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "8af094c7-15a6-4875-9f25-0a28d26f554a",
+            "score": -0.02184677,
+            "payload": {
+              "global_id": "video_test_uuid",
+              "video_id": "test",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1,
+              "ingested_at": 1,
+              "frame_ts_ms": 1,
+              "source_url": "file://test.mp4",
+              "brand_tags": [
+                "demo"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "345071fd-50da-4a75-a8eb-c27cf8c02d78",
+            "score": -0.02184677,
+            "payload": {
+              "global_id": "video_test_uuid2",
+              "video_id": "test",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1,
+              "ingested_at": 1,
+              "frame_ts_ms": 1,
+              "source_url": "file://test.mp4",
+              "brand_tags": [
+                "demo"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          }
+        ],
+        "warnings": []
+      },
+      "global": {
+        "mode": "global",
+        "shards_queried": [
+          "shard1",
+          "shard2",
+          "shard3"
+        ],
+        "took_ms": 197,
+        "results": [
+          {
+            "id": "b1375352-966f-5055-9421-6668ab68cb3f",
+            "score": 1.0,
+            "payload": {
+              "global_id": "image_1",
+              "video_id": "image_1",
+              "platform": "metadata",
+              "content_type": "image",
+              "orientation": "square",
+              "duration_sec": 0,
+              "created_at": 1771060967,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 0,
+              "source_url": "https://iirorwxhnnnmlo5m.ldycdn.com/cloud/joBpiKirljSRrkjpjrmnjn/1.jpg",
+              "brand_tags": [
+                "image"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard3"
+          },
+          {
+            "id": "2a098621-5391-5bdc-8e0b-724ac92054b0",
+            "score": 1.0,
+            "payload": {
+              "global_id": "video_Video3_002",
+              "video_id": "Video3_002",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "horizontal",
+              "duration_sec": 180,
+              "created_at": 1771060997,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 2000,
+              "source_url": "file://shared_data/videos/Video3.MP4",
+              "brand_tags": [
+                "demo",
+                "local"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard2"
+          },
+          {
+            "id": "8ab29eb8-aed2-56fb-a2ed-fe1739287596",
+            "score": 1.0,
+            "payload": {
+              "global_id": "video_Video2_001",
+              "video_id": "Video2_001",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1771061057,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 1000,
+              "source_url": "file://shared_data/videos/Video2.MP4",
+              "brand_tags": [
+                "demo",
+                "local"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "e28c87d3-c928-522e-a0f5-9bbf4d95f391",
+            "score": 0.07195217736480722,
+            "payload": {
+              "global_id": "image_2",
+              "video_id": "image_2",
+              "platform": "metadata",
+              "content_type": "image",
+              "orientation": "horizontal",
+              "duration_sec": 0,
+              "created_at": 1771060937,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 0,
+              "source_url": "https://www.east-corp-philippines.com/wp-content/uploads/2011/04/solar1.jpg",
+              "brand_tags": [
+                "image"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard3"
+          },
+          {
+            "id": "6976b8d1-7cb7-5140-bfd4-fbdc9f7bf129",
+            "score": 0.012060376723606027,
+            "payload": {
+              "global_id": "video_test_003",
+              "video_id": "test_003",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1771060937,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 3000,
+              "source_url": "file://shared_data/videos/test.mp4",
+              "brand_tags": [
+                "demo",
+                "local"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "e8ef2ee4-1977-5fa0-969c-5b4839d80732",
+            "score": 0.0,
+            "payload": {
+              "global_id": "image_0",
+              "video_id": "image_0",
+              "platform": "metadata",
+              "content_type": "image",
+              "orientation": "horizontal",
+              "duration_sec": 0,
+              "created_at": 1771060997,
+              "ingested_at": 1771061117,
+              "frame_ts_ms": 0,
+              "source_url": "https://www.justsolar.com/wp-content/uploads/2024/03/solar-panels-need-sunlight.jpg",
+              "brand_tags": [
+                "image"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard3"
+          },
+          {
+            "id": "8af094c7-15a6-4875-9f25-0a28d26f554a",
+            "score": 0.0,
+            "payload": {
+              "global_id": "video_test_uuid",
+              "video_id": "test",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1,
+              "ingested_at": 1,
+              "frame_ts_ms": 1,
+              "source_url": "file://test.mp4",
+              "brand_tags": [
+                "demo"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          },
+          {
+            "id": "345071fd-50da-4a75-a8eb-c27cf8c02d78",
+            "score": 0.0,
+            "payload": {
+              "global_id": "video_test_uuid2",
+              "video_id": "test",
+              "platform": "local",
+              "content_type": "video",
+              "orientation": "vertical",
+              "duration_sec": 45,
+              "created_at": 1,
+              "ingested_at": 1,
+              "frame_ts_ms": 1,
+              "source_url": "file://test.mp4",
+              "brand_tags": [
+                "demo"
+              ],
+              "embedding_model_version": "hash-v1"
+            },
+            "shard": "shard1"
+          }
+        ],
+        "warnings": []
+      },
+      "warnings": []
+    }
+  }
+}

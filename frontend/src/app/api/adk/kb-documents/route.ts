@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-export async function GET(req: NextRequest) {
+const ADK_API_URL = process.env.ADK_API_URL || "http://localhost:8001";
+
+export async function GET() {
   try {
-    // Fetch documents from RAG agent
-    const res = await fetch("http://localhost:8003/documents", {
+    const res = await fetch(`${ADK_API_URL}/kb/documents`, {
       cache: "no-store",
     });
     
     if (!res.ok) {
       return NextResponse.json(
-        { documents: [], error: `RAG agent returned ${res.status}` },
+        { documents: [], error: `Backend returned ${res.status}` },
         { status: 200 }
       );
     }
