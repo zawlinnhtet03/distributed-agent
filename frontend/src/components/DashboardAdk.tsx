@@ -578,12 +578,12 @@ export default function DashboardAdk() {
         const res = await fetch("/api/adk/kb-stats-direct", { cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
-          setKbStatsData({
-            totalDocs: data.totalDocs ?? 0,
-            collection: data.collection ?? "research_knowledge_base",
-            model: data.model ?? "all-MiniLM-L6-v2",
-            byType: data.byType ?? {}
-          });
+            setKbStatsData({
+              totalDocs: data.totalDocs ?? 0,
+              collection: data.collection ?? "router_multimodal_items",
+              model: data.model ?? "hash-v1",
+              byType: data.byType ?? {}
+            });
         }
       } catch {
         // Silently fail on initial load - user can click refresh
@@ -1134,8 +1134,8 @@ export default function DashboardAdk() {
                             const data = await res.json();
                             setKbStatsData({
                               totalDocs: data.totalDocs ?? 0,
-                              collection: data.collection ?? "research_knowledge_base",
-                              model: data.model ?? "all-MiniLM-L6-v2",
+                              collection: data.collection ?? "router_multimodal_items",
+                              model: data.model ?? "hash-v1",
                               byType: data.byType ?? {}
                             });
                             if (data.error) {
@@ -1200,28 +1200,22 @@ export default function DashboardAdk() {
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ query: kbQuery }),
                         });
-                        const text = await res.text();
-                        
-                        // Parse results from the response - format: **[1] TYPE - source** (Relevance: XX%)
-                        const docs: KbDocument[] = [];
-                        const docRegex = /\*\*\[(\d+)\]\s*(\w+)\s*-\s*([^\*]+?)\*\*(?:\s*\(Relevance:\s*(\d+)%\))?[^\n]*\n([^]*?)(?=\n\n\*\*\[|$)/g;
-                        let match;
-                        while ((match = docRegex.exec(text)) !== null) {
-                          const relevance = match[4] ? parseInt(match[4]) / 100 : 1 - (parseInt(match[1]) - 1) * 0.1;
-                          docs.push({
-                            content: match[5].trim(),
-                            source: match[3].trim(),
-                            type: match[2].toLowerCase() as any,
-                            score: relevance
-                          });
-                        }
-                        
-                        if (docs.length === 0 && text.includes("empty")) {
+                        const data = await res.json().catch(() => ({} as any));
+                        const docs: KbDocument[] = Array.isArray(data?.results)
+                          ? data.results.map((item: any) => ({
+                              content: String(item?.content || ""),
+                              source: String(item?.source || "unknown"),
+                              type: String(item?.type || "note") as any,
+                              score: Number(item?.score || 0) || 0,
+                            }))
+                          : [];
+
+                        if (docs.length === 0 && String(data?.error || "").toLowerCase().includes("empty")) {
                           setKbError("Knowledge base is empty. Run some searches to build it!");
                         } else if (docs.length === 0) {
                           setKbError("No relevant documents found. Try a different query.");
                         }
-                        
+
                         setKbResults(docs);
                       } catch (e: any) {
                         setKbError(`Search error: ${String(e?.message ?? e)}`);
@@ -1408,8 +1402,8 @@ export default function DashboardAdk() {
                           const stats = await statsRes.json();
                           setKbStatsData({
                             totalDocs: stats.totalDocs ?? 0,
-                            collection: stats.collection ?? "research_knowledge_base",
-                            model: stats.model ?? "all-MiniLM-L6-v2",
+                            collection: stats.collection ?? "router_multimodal_items",
+                            model: stats.model ?? "hash-v1",
                             byType: stats.byType ?? {}
                           });
                         }

@@ -1,0 +1,87 @@
+version: "3.9"
+
+services:
+  qdrant_shard1:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6331:6333"
+    volumes:
+      - qdrant_shard1_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:6333/healthz >/dev/null || wget -qO- http://localhost:6333/healthz >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  qdrant_shard2:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6332:6333"
+    volumes:
+      - qdrant_shard2_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:6333/healthz >/dev/null || wget -qO- http://localhost:6333/healthz >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  qdrant_shard3:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_shard3_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:6333/healthz >/dev/null || wget -qO- http://localhost:6333/healthz >/dev/null",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  shard_router:
+    build:
+      context: .
+      dockerfile: router/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ROUTER_PORT: "8000"
+      SHARD1_URL: "http://qdrant_shard1:6333"
+      SHARD2_URL: "http://qdrant_shard2:6333"
+      SHARD3_URL: "http://qdrant_shard3:6333"
+    depends_on:
+      qdrant_shard1:
+        condition: service_healthy
+      qdrant_shard2:
+        condition: service_healthy
+      qdrant_shard3:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  qdrant_shard1_data:
+  qdrant_shard2_data:
+  qdrant_shard3_data:

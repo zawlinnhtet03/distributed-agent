@@ -1,7 +1,7 @@
 """
 RAG Agent - Retrieval Augmented Generation Shard
 
-Manages context retrieval from a ChromaDB-backed vector store.
+Manages context retrieval via the project's sharded router backend.
 Includes ingestion, chunking, embedding, and retrieval tools.
 """
 
@@ -38,7 +38,7 @@ Available Tools:
 
 5. **ingest_directory**: Ingest a folder of files by glob pattern
 
-6. **list_collections**: Show existing ChromaDB collections
+6. **list_collections**: Show available router shards/collections
 
 Retrieval Strategy:
 1. Analyze the query to identify key concepts
@@ -76,7 +76,7 @@ Based on the knowledge base search for "[query]":
 rag_agent = create_agent(
     name="rag",
     instruction=RAG_INSTRUCTION,
-    description="Retrieves and synthesizes information from a ChromaDB knowledge base",
+    description="Retrieves and synthesizes information from the sharded router knowledge base",
     tools=[
         vector_search,
         add_document,

@@ -1,0 +1,12 @@
+{"video_id": "test_003", "embedding_dim": 32, "transcript_chars": 13, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video2_001", "embedding_dim": 32, "transcript_chars": 798, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video3_002", "embedding_dim": 32, "transcript_chars": 445, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "test_003", "embedding_dim": 32, "transcript_chars": 8, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video2_001", "embedding_dim": 32, "transcript_chars": 798, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video3_002", "embedding_dim": 32, "transcript_chars": 442, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "test_003", "embedding_dim": 32, "transcript_chars": 21, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video2_001", "embedding_dim": 32, "transcript_chars": 798, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video3_002", "embedding_dim": 32, "transcript_chars": 444, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video2_001", "embedding_dim": 32, "transcript_chars": 798, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "test_003", "embedding_dim": 32, "transcript_chars": 8, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}
+{"video_id": "Video3_002", "embedding_dim": 32, "transcript_chars": 442, "metadata": {"source": "docker_compose", "actor": "analyst_video"}}

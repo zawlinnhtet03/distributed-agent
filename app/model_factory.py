@@ -6,6 +6,7 @@ configuration across multiple agents.
 """
 
 from dataclasses import dataclass
+import os
 from typing import Any
 
 import asyncio
@@ -88,7 +89,7 @@ class ModelConfig:
     model_id: str
     temperature: float
     max_tokens: int
-    api_key: str
+    api_key: str | None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for LiteLLM kwargs."""
@@ -144,7 +145,23 @@ class ModelFactory:
             Model identifier string (e.g., "mistral/mistral-medium-latest")
         """
         settings = cls._get_settings()
-        return settings.model_ids.get(tier, settings.default_model)
+
+        # Prefer Mistral when available.
+        if settings.mistral_api_key:
+            return settings.model_ids.get(tier, settings.default_model)
+
+        # Fallback to Groq if Mistral key is not configured.
+        if settings.groq_api_key:
+            default_model = os.getenv("GROQ_DEFAULT_MODEL", "groq/llama-3.1-8b-instant")
+            fast_model = os.getenv("GROQ_FAST_MODEL", default_model)
+            model_map = {
+                "default": default_model,
+                "fast": fast_model,
+                "embedding": fast_model,
+            }
+            return model_map.get(tier, default_model)
+
+        raise RuntimeError("No model API key configured. Set MISTRAL_API_KEY or GROQ_API_KEY.")
 
     @classmethod
     def get_config(
@@ -164,11 +181,16 @@ class ModelFactory:
         Returns:
             ModelConfig instance with all parameters
         """
+        settings = cls._get_settings()
+        api_key = settings.mistral_api_key or settings.groq_api_key
+        if not api_key:
+            raise RuntimeError("No model API key configured. Set MISTRAL_API_KEY or GROQ_API_KEY.")
+
         return ModelConfig(
             model_id=cls.get_model_id(tier),
-            temperature=temperature or cls._get_settings().default_temperature,
-            max_tokens=max_tokens or cls._get_settings().default_max_tokens,
-            api_key=cls._get_settings().mistral_api_key,
+            temperature=temperature or settings.default_temperature,
+            max_tokens=max_tokens or settings.default_max_tokens,
+            api_key=api_key,
         )
 
     @classmethod

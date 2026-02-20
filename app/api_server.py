@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
 from typing import Any
 from pathlib import Path
 import secrets
@@ -17,6 +19,7 @@ import uvicorn
 
 from app.agents.aggregator import root_agent
 from app.agents.rag import rag_agent
+from app.tools.rag_tools import add_document, get_stats, list_documents, vector_search
 
 app = FastAPI()
 
@@ -25,12 +28,27 @@ logger = logging.getLogger(__name__)
 
 _SESSION_SERVICE = InMemorySessionService()
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_DATASETS_DIR = _REPO_ROOT / "datasets"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+_SHARED_DATA_DIR = _PROJECT_ROOT / "shared_data"
+_DATASETS_DIR = _PROJECT_ROOT / "datasets"
+_VIDEO_UPLOAD_DIR = _SHARED_DATA_DIR / "videos" / "uploads"
+_FINAL_REPORT_PATH = Path(
+    os.getenv(
+        "FINAL_PROJECT_REPORT_PATH",
+        str(_SHARED_DATA_DIR / "outputs" / "final_project_report.json"),
+    )
+)
+if not _FINAL_REPORT_PATH.is_absolute():
+    _FINAL_REPORT_PATH = _PROJECT_ROOT / _FINAL_REPORT_PATH
+_DEFAULT_ROUTER_URL = os.getenv("ROUTER_URL", "http://localhost:8000")
 
 
 # Serve generated chart HTML files (Plotly) and other dataset artifacts.
 # This enables dashboards to iframe the interactive charts.
+_DATASETS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/datasets", StaticFiles(directory=str(_DATASETS_DIR), html=True), name="datasets")
 
 
@@ -49,6 +67,23 @@ def _classify_upload(filename: str, kind: str) -> str:
     if ext in {".csv", ".tsv", ".xlsx", ".xls", ".json", ".parquet"}:
         return "data"
     return "data"
+
+
+def _extract_upload_text(filename: str, content: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".txt", ".md", ".markdown", ".csv", ".tsv", ".json"}:
+        return content.decode("utf-8", errors="ignore")
+    if suffix == ".pdf":
+        try:
+            from io import BytesIO
+            from pypdf import PdfReader
+
+            reader = PdfReader(BytesIO(content))
+            pages = [(page.extract_text() or "") for page in reader.pages]
+            return "\n".join(pages)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Failed to read PDF: {exc}") from exc
+    raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix or 'unknown'}")
 
 
 def _get_agent_for_app(app_name: str):
@@ -138,7 +173,7 @@ async def upload_file(file: UploadFile = File(...), kind: str = Form("auto")):
 
     category = _classify_upload(file.filename, kind)
     if category == "video":
-        target_dir = _REPO_ROOT
+        target_dir = _VIDEO_UPLOAD_DIR
     else:
         target_dir = _DATASETS_DIR
 
@@ -163,6 +198,166 @@ async def upload_file(file: UploadFile = File(...), kind: str = Form("auto")):
             "stored_path": _posix(stored_path),
         }
     )
+
+
+@app.get("/kb/stats")
+async def kb_stats():
+    try:
+        return JSONResponse(get_stats())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"totalDocs": 0, "collection": "router_multimodal_items", "model": "hash-v1", "byType": {}, "error": str(exc)},
+            status_code=200,
+        )
+
+
+@app.get("/kb/documents")
+async def kb_documents(limit: int = 200):
+    try:
+        data = list_documents(limit=limit)
+        return JSONResponse(data)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"documents": [], "count": 0, "error": str(exc)}, status_code=200)
+
+
+@app.post("/kb/search")
+async def kb_search(request: Request):
+    body = await request.json()
+    query = str(body.get("query", "")).strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    raw_top_k = body.get("top_k", body.get("nResults", 5))
+    try:
+        top_k = max(1, min(50, int(raw_top_k)))
+    except Exception:
+        top_k = 5
+
+    try:
+        data = vector_search(query=query, top_k=top_k)
+        return JSONResponse(data)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"query": query, "documents": [], "total_found": 0, "error": str(exc)},
+            status_code=200,
+        )
+
+
+@app.post("/kb/upload")
+async def kb_upload(
+    file: UploadFile = File(...),
+    chunk_size: int = Form(500),
+    overlap: int = Form(100),
+    doc_type: str = Form("note"),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    raw = await file.read()
+    text = _extract_upload_text(file.filename, raw)
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Uploaded file has no extractable text")
+
+    safe_name = Path(file.filename).name
+    source = f"upload://{safe_name}"
+    doc_id = f"upload_{Path(safe_name).stem}_{secrets.token_hex(4)}"
+    metadata = {"source": source, "type": doc_type, "filename": safe_name}
+    result = add_document(
+        content=text,
+        metadata=metadata,
+        doc_id=doc_id,
+        chunk_size=max(100, min(4000, int(chunk_size))),
+        overlap=max(0, min(1000, int(overlap))),
+    )
+
+    if result.get("status") != "success":
+        return JSONResponse(
+            {"success": False, "error": result.get("error", "Ingestion failed")},
+            status_code=400,
+        )
+
+    return JSONResponse(
+        {
+            "success": True,
+            "filename": safe_name,
+            "doc_id": result.get("doc_id"),
+            "chunks_created": result.get("chunks_added", 0),
+            "total_chars": len(text),
+            "upsert_response": result.get("upsert_response", {}),
+        }
+    )
+
+
+@app.get("/final-project/report")
+async def final_project_report():
+    if not _FINAL_REPORT_PATH.exists():
+        raise HTTPException(status_code=404, detail=f"Report not found at {_FINAL_REPORT_PATH}")
+
+    try:
+        data = json.loads(_FINAL_REPORT_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to read report: {exc}") from exc
+    return JSONResponse(data)
+
+
+@app.post("/final-project/run")
+async def run_final_project(request: Request):
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    router_url = str(body.get("router_url", _DEFAULT_ROUTER_URL)).strip()
+    source = str(body.get("source", "api_server")).strip() or "api_server"
+
+    try:
+        limit_videos = int(body.get("limit_videos", 3))
+    except Exception:
+        limit_videos = 3
+    try:
+        limit_images = int(body.get("limit_images", 3))
+    except Exception:
+        limit_images = 3
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "orchestrator.final_project",
+        "--router-url",
+        router_url,
+        "--limit-videos",
+        str(limit_videos),
+        "--limit-images",
+        str(limit_images),
+        "--source",
+        source,
+    ]
+    proc = await asyncio.to_thread(
+        subprocess.run,
+        cmd,
+        cwd=str(_PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    payload: dict[str, Any] = {
+        "status": "ok" if proc.returncode == 0 else "error",
+        "return_code": proc.returncode,
+        "command": cmd,
+        "stdout": (proc.stdout or "")[-4000:],
+        "stderr": (proc.stderr or "")[-4000:],
+        "report_path": _posix(_FINAL_REPORT_PATH),
+    }
+
+    if _FINAL_REPORT_PATH.exists():
+        try:
+            payload["report"] = json.loads(_FINAL_REPORT_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            payload["report"] = None
+
+    status = 200 if proc.returncode == 0 else 500
+    return JSONResponse(payload, status_code=status)
 
 
 @app.post("/apps/{app_name}/users/{user_id}/sessions")
@@ -378,7 +573,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("ADK_BACKEND_PORT", "8001"))
     reload = os.environ.get("ADK_BACKEND_RELOAD", "0").lower() in {"1", "true", "yes"}
     uvicorn.run(
-        "app.api_server:app",
+        app,
         host=host,
         port=port,
         reload=reload,
