@@ -27,8 +27,6 @@ class Settings(BaseSettings):
     )
 
     # API Keys
-    # Groq key is now optional; primary provider is Mistral
-    groq_api_key: str | None = None
     mistral_api_key: str | None = None
     tavily_api_key: str
 

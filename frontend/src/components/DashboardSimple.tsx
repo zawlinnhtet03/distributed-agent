@@ -397,8 +397,11 @@ export default function DashboardSimple() {
     const data = await res.json();
     const id = String(data?.id ?? "");
     if (!id) throw new Error("Failed to create session");
+
+    clearSharedState();
     setSessionId(id);
     setSessionReady(true);
+    updateSharedState({ sessionId: id, artifacts: [], traceEvents: [], isProcessing: false, guardianAnswer: "" });
 
     setSessions(prev => {
       const next: SessionInfo[] = [{ id, createdAt: Date.now() }, ...prev.filter(s => s.id !== id)];
@@ -428,6 +431,7 @@ export default function DashboardSimple() {
       setSessionReady(false);
       commitPendingHistory();
       await ensureBackendSession(id);
+      clearSharedState();
       setSessionId(id);
       setSessionReady(true);
       persistActiveSession(id);
@@ -454,11 +458,13 @@ export default function DashboardSimple() {
     setExpandedHistoryEntryId(null);
     setError("");
     setTraceEvents([]);
+    setArtifacts([]);
     setArtifactDebug({ markersSeen: 0, parsedOk: 0, parseFailed: 0 });
     agentBufferRef.current = {};
     activeAgentsRef.current = new Set();
     AGENTS.forEach(a => updateAgentStatus(a.key, "idle"));
     updateAgentStatus("Planner", "active");
+    updateSharedState({ artifacts: [] });
   };
 
   // Create session on mount
@@ -660,11 +666,14 @@ export default function DashboardSimple() {
               activeAgentsRef.current.add(agentKey);
               if (text) {
                 const cleanedText = extractedText ? extractedText.cleanedText : String(text);
-                agentBufferRef.current[agentKey] = (agentBufferRef.current[agentKey] || "") + cleanedText;
+                // Don't accumulate for Guardian - replace to avoid duplication
                 if (agentKey === "Guardian") {
-                  guardianAnswerRef.current = agentBufferRef.current[agentKey];
-                  setGuardianAnswer(guardianAnswerRef.current);
-                  updateSharedState({ guardianAnswer: guardianAnswerRef.current });
+                  agentBufferRef.current[agentKey] = cleanedText;
+                  guardianAnswerRef.current = cleanedText;
+                  setGuardianAnswer(cleanedText);
+                  updateSharedState({ guardianAnswer: cleanedText });
+                } else {
+                  agentBufferRef.current[agentKey] = (agentBufferRef.current[agentKey] || "") + cleanedText;
                 }
               }
             }
@@ -822,6 +831,7 @@ export default function DashboardSimple() {
                   try {
                     setSessionReady(false);
                     await createNewSession();
+                    clearSharedState();
                     resetUiForNewRun();
                   } catch (err: unknown) {
                     const msg = err instanceof Error ? err.message : String(err ?? "Failed to create new session");
@@ -1157,6 +1167,11 @@ export default function DashboardSimple() {
                                             {children}
                                           </a>
                                         ),
+                                        img: ({ src, alt }) => {
+                                          const s = String(src ?? "").trim();
+                                          if (!s) return null;
+                                          return <img src={s} alt={alt ?? ""} className="max-w-full rounded-lg border border-white/10" />;
+                                        },
                                         pre: ({ children }) => (
                                           <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/40 p-3">
                                             {children}
@@ -1262,6 +1277,11 @@ export default function DashboardSimple() {
                               {children}
                             </a>
                           ),
+                          img: ({ src, alt }) => {
+                            const s = String(src ?? "").trim();
+                            if (!s) return null;
+                            return <img src={s} alt={alt ?? ""} className="max-w-full rounded-xl border border-white/10" />;
+                          },
                           p: ({ children }) => (
                             <p className="my-2">{children}</p>
                           ),
@@ -1344,7 +1364,7 @@ export default function DashboardSimple() {
                               </tr>
                             </thead>
                             <tbody>
-                              {a.rows.map((r, rIdx) => (
+                              {a.rows.slice(0, 5).map((r, rIdx) => (
                                 <tr key={rIdx} className="border-b border-white/5 last:border-b-0">
                                   {a.columns.map((c) => (
                                     <td key={c} className="px-3 py-2 whitespace-nowrap">
@@ -1353,6 +1373,16 @@ export default function DashboardSimple() {
                                   ))}
                                 </tr>
                               ))}
+                              {a.rows.length > 5 && (
+                                <tr className="border-b border-white/5">
+                                  <td
+                                    colSpan={a.columns.length}
+                                    className="px-3 py-2 text-center text-white/40 italic"
+                                  >
+                                    ... {a.rows.length - 5} more rows
+                                  </td>
+                                </tr>
+                              )}
                             </tbody>
                           </table>
                         </div>
@@ -1461,6 +1491,11 @@ export default function DashboardSimple() {
                                 {children}
                               </a>
                             ),
+                            img: ({ src, alt }) => {
+                              const s = String(src ?? "").trim();
+                              if (!s) return null;
+                              return <img src={s} alt={alt ?? ""} className="max-w-full rounded-lg border border-white/10" />;
+                            },
                           }}
                         >
                           {entry.response.length > 500 ? entry.response.slice(0, 500) + "..." : entry.response}
@@ -1585,6 +1620,11 @@ export default function DashboardSimple() {
                                                           {children}
                                                         </a>
                                                       ),
+                                                      img: ({ src, alt }) => {
+                                                        const s = String(src ?? "").trim();
+                                                        if (!s) return null;
+                                                        return <img src={s} alt={alt ?? ""} className="max-w-full rounded-lg border border-white/10" />;
+                                                      },
                                                       pre: ({ children }) => (
                                                         <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/40 p-3">
                                                           {children}
@@ -1619,79 +1659,6 @@ export default function DashboardSimple() {
                             </div>
                           </div>
                         ) : null}
-
-                        <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                          <div className="border-b border-white/10 px-4 py-3 flex items-center gap-2 text-[12px] font-semibold tracking-wide text-white/70">
-                            <span className="text-emerald-400 text-sm">✓</span>
-                            <span>Task Complete</span>
-                          </div>
-                          <div className="p-5">
-                            {(() => {
-                              const taskText = stripPlanSection(entry.response || "");
-                              const normalized = normalizeForMarkdown(taskText);
-                              const shouldRenderMarkdown =
-                                isLikelyMarkdown(normalized) || taskText.includes("**") || taskText.includes("```") || /[•‣◦]/.test(taskText);
-
-                              if (!shouldRenderMarkdown) {
-                                return (
-                                  <div className="whitespace-pre-wrap break-words text-[17px] leading-8 text-white/90">
-                                    {taskText}
-                                  </div>
-                                );
-                              }
-                              return (
-                                <article className="max-w-none text-[17px] leading-8 text-white/90">
-                                  <ReactMarkdown
-                                    remarkPlugins={[remarkGfm, remarkBreaks]}
-                                    components={{
-                                      a: ({ href, children }) => (
-                                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
-                                          {children}
-                                        </a>
-                                      ),
-                                      p: ({ children }) => (
-                                        <p className="my-2">{children}</p>
-                                      ),
-                                      ul: ({ children }) => (
-                                        <ul className="my-2 list-disc pl-5 marker:text-cyan-400">{children}</ul>
-                                      ),
-                                      ol: ({ children }) => (
-                                        <ol className="my-2 list-decimal pl-5 marker:text-cyan-400">{children}</ol>
-                                      ),
-                                      li: ({ children }) => (
-                                        <li className="my-1">{children}</li>
-                                      ),
-                                      h1: ({ children }) => (
-                                        <h1 className="text-lg font-semibold text-white my-3">{children}</h1>
-                                      ),
-                                      h2: ({ children }) => (
-                                        <h2 className="text-lg font-semibold text-white my-3">{children}</h2>
-                                      ),
-                                      h3: ({ children }) => (
-                                        <h3 className="text-base font-semibold text-white/90 my-3">{children}</h3>
-                                      ),
-                                      pre: ({ children }) => (
-                                        <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/40 p-4">
-                                          {children}
-                                        </pre>
-                                      ),
-                                      code: ({ children }) => (
-                                        <code className="break-words">{children}</code>
-                                      ),
-                                      table: ({ children }) => (
-                                        <div className="overflow-x-auto">
-                                          <table>{children}</table>
-                                        </div>
-                                      ),
-                                    }}
-                                  >
-                                    {normalized}
-                                  </ReactMarkdown>
-                                </article>
-                              );
-                            })()}
-                          </div>
-                        </div>
                       </div>
                     )}
 

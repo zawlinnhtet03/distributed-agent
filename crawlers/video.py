@@ -19,18 +19,18 @@ litellm.suppress_debug_info = True
 
 load_dotenv()
 
-groq_api_key = os.getenv("GROQ_API_KEY")
 google_api_key = os.getenv("GOOGLE_API_KEY")
+mistral_api_key = os.getenv("MISTRAL_API_KEY")
 
 if google_api_key:
     llm_model = Gemini(model="gemini-2.5-flash-lite")
-elif groq_api_key:
+elif mistral_api_key:
     llm_model = LiteLlm(
-        model="groq/llama-3.1-8b-instant",
-        api_key=groq_api_key,
+        model="mistral/mistral-medium-latest",
+        api_key=mistral_api_key,
     )
 else:
-    raise ValueError("Missing model key: set GOOGLE_API_KEY or GROQ_API_KEY")
+    raise ValueError("Missing model key: set GOOGLE_API_KEY or MISTRAL_API_KEY")
 
 
 PREFERRED_OLLAMA_VISION_MODEL = os.getenv("OLLAMA_VISION_MODEL", "moondream").strip() or "moondream"

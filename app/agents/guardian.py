@@ -207,6 +207,7 @@ def _guardian_pre_before_model(*args, **kwargs):
 
     if callback_context is not None:
         callback_context.state["sanitized_request"] = sanitized
+        callback_context.state["original_user_query"] = user_text
         callback_context.state["guardian_pre_safety"] = safety
 
     return LlmResponse(
@@ -232,7 +233,15 @@ def _guardian_before_model(*args, **kwargs):
 
     force_text_only_model_input(callback_context=callback_context, llm_request=llm_request)
 
-    content = _extract_latest_user_text(llm_request)
+    # Prefer the aggregator's actual output (stored in state) over extracting
+    # from llm_request, which may resolve to the original user text and lose
+    # all research/data results produced by the aggregator.
+    content = ""
+    if callback_context is not None:
+        content = str(callback_context.state.get("aggregator_output", "")).strip()
+    if not content:
+        content = _extract_latest_user_text(llm_request)
+
     safety = check_content_safety(content)
     urls = _extract_urls(content)
     source_quality = validate_sources(urls) if urls else {"overall_quality": "none"}
@@ -276,7 +285,6 @@ guardian_agent = create_agent(
     name="guardian",
     instruction=GUARDIAN_INSTRUCTION,
     description="Reviews outputs for safety, PII, sensitive topics before delivery",
-    tools=[check_content_safety, validate_sources, format_safe_response],
     tier="default",
     temperature=0.1,
     before_model_callback=_guardian_before_model,
@@ -307,7 +315,6 @@ guardian_pre_agent = create_agent(
     name="guardian_pre",
     instruction=GUARDIAN_PRE_INSTRUCTION,
     description="Sanitizes the user request (PII redaction) before delegation",
-    tools=[check_content_safety, format_safe_response],
     tier="default",
     temperature=0.1,
     output_key="sanitized_request",

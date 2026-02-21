@@ -35,7 +35,7 @@ def create_agent(
     **extra_kwargs: Any,
 ) -> LlmAgent:
     """
-    Create a standardized LlmAgent with Groq configuration.
+    Create a standardized LlmAgent with Mistral configuration.
 
     This is the recommended way to create agents in the system. It ensures
     consistent configuration and integrates with the ModelFactory.

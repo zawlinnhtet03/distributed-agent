@@ -46,7 +46,7 @@ def _part_to_text(part: types.Part) -> str:
 def force_text_only_model_input(*args: Any, **kwargs: Any):
     """
     Normalize all incoming message parts to text-only to keep OpenAI-compatible
-    providers (like Groq chat completions) from rejecting structured content.
+    providers from rejecting structured content.
     """
     llm_request = kwargs.get("llm_request")
     if llm_request is None and len(args) >= 2:

@@ -8,12 +8,15 @@ before-model callback.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 
 from google.adk.agents import ParallelAgent, SequentialAgent
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 from app.agents.base_agent import create_agent
 from app.agents.guardian import guardian_agent, guardian_pre_agent
@@ -43,6 +46,7 @@ Primary behavior:
 - Read the planner output from state key {plan}.
 - Read the sanitized request from {sanitized_request} when available.
 - Synthesize the already-collected results into one clear response.
+- If there are any related tasks with gathering_layer, run them.
 
 If no delegated outputs are available, provide a concise direct response.
 """
@@ -73,12 +77,59 @@ def _extract_latest_user_text(llm_request) -> str:
     return fallback
 
 
+# Canonical mapping: alias → runnable agent name
+_AGENT_ALIASES: dict[str, str] = {
+    "gathering_layer": "gathering_layer",
+    "gathering layer": "gathering_layer",
+    "gatheringlayer": "gathering_layer",
+    "scraper": "gathering_layer",
+    "rag": "gathering_layer",
+    "web_search": "gathering_layer",
+    "search": "gathering_layer",
+    "research": "gathering_layer",
+    "data": "data",
+    "data_agent": "data",
+    "video": "video",
+    "video_agent": "video",
+    "aggregator": "aggregator",
+}
+
+
+def _normalize_agent_name(raw: str) -> str:
+    """Strip markdown formatting and resolve aliases."""
+    # Remove markdown bold, backticks, underscores used as formatting
+    cleaned = re.sub(r"[*`]", "", raw).strip().lower()
+    # Try exact alias lookup first
+    if cleaned in _AGENT_ALIASES:
+        return _AGENT_ALIASES[cleaned]
+    # Try replacing spaces/hyphens with underscores
+    underscore_form = re.sub(r"[\s-]+", "_", cleaned)
+    if underscore_form in _AGENT_ALIASES:
+        return _AGENT_ALIASES[underscore_form]
+    return cleaned
+
+
 def _extract_plan_agents(plan_text: str) -> list[str]:
+    """Extract agent names from planner output. Handles multiple formats."""
     agents: list[str] = []
-    for match in re.finditer(r"agent:\s*([a-z_]+)", plan_text or "", flags=re.IGNORECASE):
-        name = match.group(1).strip().lower()
+    if not plan_text:
+        return agents
+    
+    # Pattern 1: "agent: gathering_layer" (standard format)
+    for match in re.finditer(r"agent:\s*\**`?([a-z_][a-z0-9_ -]*)`?\**", plan_text, flags=re.IGNORECASE):
+        raw_name = match.group(1).strip()
+        name = _normalize_agent_name(raw_name)
         if name and name not in agents:
             agents.append(name)
+    
+    # Pattern 2: "→ agent: data" or "-> agent: data" (arrow format)
+    for match in re.finditer(r"[-→]\s*agent:\s*\**`?([a-z_][a-z0-9_ -]*)`?\**", plan_text, flags=re.IGNORECASE):
+        raw_name = match.group(1).strip()
+        name = _normalize_agent_name(raw_name)
+        if name and name not in agents:
+            agents.append(name)
+    
+    logger.info("[aggregator] Extracted from plan: %s", agents)
     return agents
 
 
@@ -91,10 +142,24 @@ def _infer_agents_from_query(query: str) -> list[str]:
     ):
         agents.append("video")
 
-    if any(token in q for token in ("csv", "tsv", "xlsx", "dataset", "eda", "table", "data")):
+    if any(
+        token in q
+        for token in (
+            "csv", "tsv", "xlsx", "dataset", "eda", "table", "data",
+            "file", "analyze", "column", "row", "excel", "dataframe",
+            "profile", "statistic", "trend", "chart", "plot",
+        )
+    ):
         agents.append("data")
 
-    if any(token in q for token in ("search", "web", "news", "research", "source", "citation")):
+    if any(
+        token in q
+        for token in (
+            "search", "web", "news", "research", "source", "citation",
+            "find", "look up", "lookup", "latest", "current", "recent",
+            "article", "report", "scrape", "crawl", "discover",
+        )
+    ):
         agents.append("gathering_layer")
 
     return agents or ["aggregator"]
@@ -206,34 +271,96 @@ def _direct_aggregator_before_model(*args, **kwargs):
 
     force_text_only_model_input(callback_context=callback_context, llm_request=llm_request)
 
-    query = ""
+    # ── Collect query from ALL available sources ──
+    state_query = ""
+    original_query = ""
     plan_text = ""
     if callback_context is not None:
-        query = str(callback_context.state.get("sanitized_request", "")).strip()
+        state_query = str(callback_context.state.get("sanitized_request", "")).strip()
+        original_query = str(callback_context.state.get("original_user_query", "")).strip()
         plan_text = str(callback_context.state.get("plan", "")).strip()
-    if not query:
-        query = _extract_latest_user_text(llm_request)
 
+    llm_query = _extract_latest_user_text(llm_request)
+
+    # Use whichever source is non-empty; prefer state (sanitized) but keep
+    # the raw llm_query too — we run inference on BOTH to avoid losing intent.
+    query = state_query or original_query or llm_query
+    
+    # Data/video agents need the ORIGINAL query to detect file references
+    # (sanitization may strip PII including file paths like C:\path\file.csv)
+    query_for_files = original_query or llm_query or state_query
+    
+    logger.info(
+        "[aggregator] RAW PLAN TEXT:\n%s",
+        plan_text if plan_text else "(empty)",
+    )
+
+    # ── Determine which agents to run ──
     planned_agents = _extract_plan_agents(plan_text)
-    agents = planned_agents or _infer_agents_from_query(query)
+    inferred_from_state = _infer_agents_from_query(state_query) if state_query else []
+    inferred_from_original = _infer_agents_from_query(original_query) if original_query else []
+    inferred_from_llm = _infer_agents_from_query(llm_query) if llm_query else []
+
+    # Merge all sources: planned + inferred from state + inferred from original + inferred from raw query
+    seen: set[str] = set()
+    agents: list[str] = []
+    for name in planned_agents + inferred_from_state + inferred_from_original + inferred_from_llm:
+        if name not in seen and name != "aggregator":
+            seen.add(name)
+            agents.append(name)
+
+    # SAFETY NET: If planner only picked data but query has research keywords, force gathering_layer
+    combined_text = f"{original_query} {llm_query}".lower()
+    research_keywords = ["research", "news", "search", "web", "latest", "current", "trend", "article"]
+    data_keywords = ["csv", "dataset", "file", "analyze", "data"]
+    has_research = any(kw in combined_text for kw in research_keywords)
+    has_data = any(kw in combined_text for kw in data_keywords)
+    
+    if has_research and "gathering_layer" not in agents:
+        logger.warning("[aggregator] FORCE: Adding gathering_layer (research keywords detected)")
+        agents.append("gathering_layer")
+    if has_data and "data" not in agents and any(ext in combined_text for ext in [".csv", ".tsv", ".xlsx"]):
+        logger.warning("[aggregator] FORCE: Adding data agent (file keywords detected)")
+        agents.append("data")
+
+    # If nothing was resolved at all, try inference on the combined text
+    if not agents:
+        agents = _infer_agents_from_query(f"{state_query} {llm_query}")
+
     runnable = [a for a in agents if a in {"video", "data", "gathering_layer"}]
+
+    logger.info(
+        "[aggregator] planned=%s  inferred_state=%s  inferred_original=%s  inferred_llm=%s  final_runnable=%s",
+        planned_agents, inferred_from_state, inferred_from_original, inferred_from_llm, runnable,
+    )
+    logger.info("[aggregator] query(sanitized)=%r  query_for_files(original)=%r", query[:120], query_for_files[:120])
 
     # If planner requested only direct aggregator handling, let model answer normally.
     if not runnable:
         return None
 
     sections: list[str] = []
+    executed_agents: list[str] = []
     for agent_name in runnable:
+        logger.info("[aggregator] ===== STARTING %s =====", agent_name)
         try:
             if agent_name == "video":
-                output = _run_video_task(query)
+                output = _run_video_task(query_for_files)
             elif agent_name == "data":
-                output = _run_data_task(query)
-            else:
+                output = _run_data_task(query_for_files)
+            elif agent_name == "gathering_layer":
                 output = _run_gathering_task(query)
+            else:
+                output = f"Unknown agent: {agent_name}"
+            executed_agents.append(agent_name)
+            logger.info("[aggregator] ===== COMPLETED %s (output len=%d) =====", agent_name, len(output))
         except Exception as exc:  # noqa: BLE001
+            logger.error("[aggregator] ===== FAILED %s: %s =====", agent_name, exc)
             output = f"Execution error in {agent_name}: {exc}"
+            executed_agents.append(f"{agent_name}(failed)")
         sections.append(f"[{agent_name}]\n{output}")
+
+    logger.info("[aggregator] Executed agents: %s", executed_agents)
 
     final_text = "\n\n".join(sections)
 
@@ -243,6 +370,10 @@ def _direct_aggregator_before_model(*args, **kwargs):
             "query": query,
             "plan": plan_text,
         }
+        # Store aggregator output so the guardian can pass it through
+        callback_context.state["aggregator_output"] = final_text
+        # IMPORTANT: Clear the plan so the LLM doesn't try to call agents as tools
+        callback_context.state["plan"] = ""
 
     return LlmResponse(
         content=types.Content(

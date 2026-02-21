@@ -7,10 +7,9 @@ import sys
 from typing import Any
 from pathlib import Path
 import secrets
+import uuid
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+from dotenv import load_dotenv
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,6 +19,10 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.genai.types import Content, Part
 import uvicorn
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", override=False)
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env.local", override=False)
 
 from app.agents.aggregator import root_agent
 from app.agents.rag import rag_agent
@@ -31,6 +34,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _SESSION_SERVICE = InMemorySessionService()
+
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 _SHARED_DATA_DIR = _PROJECT_ROOT / "shared_data"
 _DATASETS_DIR = _PROJECT_ROOT / "datasets"
@@ -375,15 +381,22 @@ async def create_session(app_name: str, user_id: str, request: Request):
         return {"id": session.id}
     except AlreadyExistsError:
         if session_id:
-            return {"id": str(session_id)}
-        raise
+            fresh_id = f"{session_id}-{uuid.uuid4().hex[:8]}"
+            session = await _SESSION_SERVICE.create_session(app_name=app_name, user_id=user_id, session_id=fresh_id)
+            return {"id": session.id}
+        session = await _SESSION_SERVICE.create_session(app_name=app_name, user_id=user_id, session_id=uuid.uuid4().hex)
+        return {"id": session.id}
     except Exception as exc:  # noqa: BLE001
         # Some environments can surface AlreadyExistsError instances that don't match the imported symbol
         # due to namespace package/version quirks. Treat "already exists" as an idempotent success.
         cls_name = exc.__class__.__name__
         msg = str(exc)
-        if session_id and (cls_name == "AlreadyExistsError" or "already exists" in msg.lower()):
-            return {"id": str(session_id)}
+        if cls_name == "AlreadyExistsError" or "already exists" in msg.lower():
+            fresh_id = uuid.uuid4().hex
+            if session_id:
+                fresh_id = f"{session_id}-{fresh_id[:8]}"
+            session = await _SESSION_SERVICE.create_session(app_name=app_name, user_id=user_id, session_id=fresh_id)
+            return {"id": session.id}
         raise
 
 

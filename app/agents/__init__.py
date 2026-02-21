@@ -3,7 +3,7 @@ Agents module for the Multi Agent Intelligence Research Hub.
 
 Each agent is a modular component that can be composed into larger systems.
 All agents share a common interface and use the ModelFactory for consistent
-Groq configuration.
+model configuration.
 
 Architecture (Sequential Pipeline):
     decision_pipeline (SequentialAgent) - ROOT

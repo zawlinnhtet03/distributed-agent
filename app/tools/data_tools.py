@@ -464,18 +464,61 @@ def build_chart(file_path: str, chart_type: str = "Bar", x: str | None = None,
     df2 = df.copy()
     fig = None
 
+    palette = px.colors.qualitative.Vivid
+
     if chart_type in ["Bar", "Line"] and y:
         if pd.api.types.is_string_dtype(df2[x]) or isinstance(df2[x].dtype, pd.CategoricalDtype):
             agg_df = df2.groupby(x, dropna=False)[y].agg(agg).reset_index().sort_values(y, ascending=False).head(int(top_k))
-            fig = px.bar(agg_df, x=x, y=y, title=f"{y} by {x}") if chart_type == "Bar" else px.line(agg_df, x=x, y=y, title=f"{y} by {x}")
+            if chart_type == "Bar":
+                fig = px.bar(
+                    agg_df,
+                    x=x,
+                    y=y,
+                    color=(color if (color and color in agg_df.columns) else x),
+                    title=f"{y} by {x}",
+                    color_discrete_sequence=palette,
+                )
+            else:
+                fig = px.line(
+                    agg_df,
+                    x=x,
+                    y=y,
+                    color=(color if (color and color in agg_df.columns) else None),
+                    title=f"{y} by {x}",
+                    color_discrete_sequence=palette,
+                )
         else:
-            fig = px.bar(df2, x=x, y=y, title=f"{y} vs {x}") if chart_type == "Bar" else px.line(df2, x=x, y=y, title=f"{y} vs {x}")
+            if chart_type == "Bar":
+                fig = px.bar(
+                    df2,
+                    x=x,
+                    y=y,
+                    color=(color if (color and color in df2.columns) else None),
+                    title=f"{y} vs {x}",
+                    color_discrete_sequence=palette,
+                )
+            else:
+                fig = px.line(
+                    df2,
+                    x=x,
+                    y=y,
+                    color=(color if (color and color in df2.columns) else None),
+                    title=f"{y} vs {x}",
+                    color_discrete_sequence=palette,
+                )
     elif chart_type == "Scatter" and y:
         # keep payload small for UI streaming
         max_points = 800
         if len(df2) > max_points:
             df2 = df2.sample(n=max_points, random_state=42)
-        fig = px.scatter(df2, x=x, y=y, title=f"{y} vs {x}")
+        fig = px.scatter(
+            df2,
+            x=x,
+            y=y,
+            color=(color if (color and color in df2.columns) else None),
+            title=f"{y} vs {x}",
+            color_discrete_sequence=palette,
+        )
     elif chart_type == "Histogram":
         # pre-aggregate bins to avoid huge raw arrays in plotly JSON
         s = pd.to_numeric(df2[x], errors="coerce").dropna()
@@ -486,18 +529,51 @@ def build_chart(file_path: str, chart_type: str = "Bar", x: str | None = None,
         bin_counts = counts.value_counts(sort=False)
         centers = [(edges[i] + edges[i + 1]) / 2 for i in range(len(edges) - 1)]
         hist_df = pd.DataFrame({"bin_center": centers, "count": bin_counts.values})
-        fig = px.bar(hist_df, x="bin_center", y="count", title=f"Distribution of {x}")
+        fig = px.bar(
+            hist_df,
+            x="bin_center",
+            y="count",
+            title=f"Distribution of {x}",
+            color_discrete_sequence=palette,
+        )
     elif chart_type == "Pie":
         if y and pd.api.types.is_numeric_dtype(df2[y]):
             agg_df = df2.groupby(x, dropna=False)[y].sum().reset_index().sort_values(y, ascending=False).head(int(top_k))
-            fig = px.pie(agg_df, names=x, values=y, title=f"{y} by {x}")
+            fig = px.pie(
+                agg_df,
+                names=x,
+                values=y,
+                title=f"{y} by {x}",
+                color_discrete_sequence=palette,
+            )
         else:
             vc = df2[x].value_counts().reset_index()
             vc.columns = [x, "count"]
-            fig = px.pie(vc.head(int(top_k)), names=x, values="count", title=f"Distribution of {x}")
+            fig = px.pie(
+                vc.head(int(top_k)),
+                names=x,
+                values="count",
+                title=f"Distribution of {x}",
+                color_discrete_sequence=palette,
+            )
 
     if fig is None:
         return _truncate_tool_output(f"Could not build {chart_type} chart.")
+
+    fig.update_layout(
+        title={"x": 0.5, "xanchor": "center"},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#e5e7eb"},
+        legend={"title": "", "orientation": "h", "y": -0.25},
+        margin={"l": 50, "r": 30, "t": 60, "b": 70},
+    )
+    fig.update_xaxes(gridcolor="rgba(255,255,255,0.12)", zerolinecolor="rgba(255,255,255,0.15)")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.12)", zerolinecolor="rgba(255,255,255,0.15)")
+    fig.update_traces(marker={"line": {"width": 0}}, opacity=0.95)
+
+    if chart_type == "Bar" and color is None:
+        fig.update_layout(showlegend=False)
 
     try:
         # Use Plotly's JSON serializer so payload is always JSON-safe.
@@ -523,3 +599,179 @@ def build_chart(file_path: str, chart_type: str = "Bar", x: str | None = None,
         # Do not truncate artifact payload; UI needs the full JSON to render charts.
         return out + "\n\n" + artifact
     return _truncate_tool_output(out)
+
+
+def auto_visualize(file_path: str, max_charts: int = 3) -> str:
+    import json
+    import plotly.express as px
+    import plotly.io as pio
+
+    resolved = _resolve_path(file_path)
+    if not resolved:
+        return _truncate_tool_output(f"Error: '{file_path}' not found.")
+
+    try:
+        df = _read_dataframe(resolved)
+    except Exception as e:
+        return f"Error: {e}"
+
+    if df.shape[0] == 0 or df.shape[1] == 0:
+        return _truncate_tool_output("Error: dataset is empty.")
+
+    palette = px.colors.qualitative.Vivid
+
+    def _style(fig):
+        fig.update_layout(
+            title={"x": 0.5, "xanchor": "center"},
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font={"color": "#e5e7eb"},
+            legend={"title": "", "orientation": "h", "y": -0.25},
+            margin={"l": 50, "r": 30, "t": 60, "b": 70},
+        )
+        fig.update_xaxes(gridcolor="rgba(255,255,255,0.12)", zerolinecolor="rgba(255,255,255,0.15)")
+        fig.update_yaxes(gridcolor="rgba(255,255,255,0.12)", zerolinecolor="rgba(255,255,255,0.15)")
+        fig.update_traces(marker={"line": {"width": 0}}, opacity=0.95)
+        return fig
+
+    def _spec(fig):
+        spec = json.loads(pio.to_json(fig, remove_uids=True, pretty=False))
+        if isinstance(spec, dict):
+            layout = spec.get("layout")
+            if isinstance(layout, dict) and "template" in layout:
+                layout.pop("template", None)
+        return spec
+
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    non_numeric_cols = [c for c in df.columns.tolist() if c not in numeric_cols]
+
+    def _cardinality(col: str) -> int:
+        try:
+            return int(df[col].nunique(dropna=True))
+        except Exception:
+            return 10**9
+
+    def _is_datetime_like(col: str) -> bool:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            return True
+        try:
+            parsed = pd.to_datetime(df[col], errors="coerce")
+            return parsed.notna().mean() >= 0.8
+        except Exception:
+            return False
+
+    datetime_cols = [c for c in df.columns.tolist() if c in non_numeric_cols and _is_datetime_like(c)]
+
+    y = None
+    if numeric_cols:
+        try:
+            y = df[numeric_cols].var(numeric_only=True).sort_values(ascending=False).index[0]
+        except Exception:
+            y = numeric_cols[0]
+
+    small_cats = [c for c in non_numeric_cols if 2 <= _cardinality(c) <= 15]
+    best_cat = None
+    if small_cats:
+        best_cat = sorted(small_cats, key=lambda c: _cardinality(c))[0]
+
+    figs: list[tuple[str, object]] = []
+
+    if y is not None and best_cat is not None and len(figs) < int(max_charts):
+        try:
+            agg_df = df.groupby(best_cat, dropna=False)[y].mean().reset_index().sort_values(y, ascending=False)
+            if len(agg_df) > 12:
+                agg_df = agg_df.head(12)
+            fig = px.bar(
+                agg_df,
+                x=best_cat,
+                y=y,
+                color=best_cat,
+                title=f"Average {y} by {best_cat}",
+                color_discrete_sequence=palette,
+            )
+            figs.append(("Key comparison", _style(fig)))
+        except Exception:
+            pass
+
+    if y is not None and len(figs) < int(max_charts):
+        try:
+            s = pd.to_numeric(df[y], errors="coerce").dropna()
+            if len(s) > 0:
+                bins = 40
+                counts, edges = pd.cut(s, bins=bins, retbins=True, include_lowest=True)
+                bin_counts = counts.value_counts(sort=False)
+                centers = [(edges[i] + edges[i + 1]) / 2 for i in range(len(edges) - 1)]
+                hist_df = pd.DataFrame({"bin_center": centers, "count": bin_counts.values})
+                fig = px.bar(
+                    hist_df,
+                    x="bin_center",
+                    y="count",
+                    title=f"Distribution of {y}",
+                    color_discrete_sequence=palette,
+                )
+                figs.append(("Distribution", _style(fig)))
+        except Exception:
+            pass
+
+    if y is not None and datetime_cols and len(figs) < int(max_charts):
+        dt_col = datetime_cols[0]
+        try:
+            dt = df[dt_col]
+            if not pd.api.types.is_datetime64_any_dtype(dt):
+                dt = pd.to_datetime(dt, errors="coerce")
+            tmp = pd.DataFrame({dt_col: dt, y: pd.to_numeric(df[y], errors="coerce")}).dropna()
+            if len(tmp) > 0:
+                tmp["__date"] = tmp[dt_col].dt.date
+                g = tmp.groupby("__date")[y].mean().reset_index().sort_values("__date")
+                fig = px.line(
+                    g,
+                    x="__date",
+                    y=y,
+                    title=f"Average {y} over time",
+                    color_discrete_sequence=palette,
+                )
+                figs.append(("Trend", _style(fig)))
+        except Exception:
+            pass
+
+    if y is not None and len(numeric_cols) >= 2 and len(figs) < int(max_charts):
+        x_num = next((c for c in numeric_cols if c != y), None)
+        if x_num is not None:
+            try:
+                df2 = df.copy()
+                df2[y] = pd.to_numeric(df2[y], errors="coerce")
+                df2[x_num] = pd.to_numeric(df2[x_num], errors="coerce")
+                df2 = df2.dropna(subset=[y, x_num])
+                if len(df2) > 800:
+                    df2 = df2.sample(n=800, random_state=42)
+                color_col = best_cat if best_cat in df2.columns else None
+                fig = px.scatter(
+                    df2,
+                    x=x_num,
+                    y=y,
+                    color=color_col,
+                    title=f"{y} vs {x_num}",
+                    color_discrete_sequence=palette,
+                )
+                figs.append(("Relationship", _style(fig)))
+            except Exception:
+                pass
+
+    if not figs:
+        return _truncate_tool_output("No suitable charts could be generated for this dataset.")
+
+    lines = [f"Auto-visualization generated {len(figs)} chart(s) for: {os.path.basename(resolved)}"]
+    out_parts: list[str] = []
+    out_parts.append("\n".join(lines))
+
+    for title, fig in figs[: int(max_charts)]:
+        try:
+            spec = _spec(fig)
+        except Exception as e:
+            out_parts.append(_truncate_tool_output(f"Error: failed to serialize chart '{title}': {e}"))
+            continue
+        artifact = _artifact_line({"kind": "chart_plotly", "title": title, "spec": spec})
+        if artifact:
+            out_parts.append(artifact)
+
+    return "\n\n".join(out_parts)

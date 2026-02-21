@@ -15,10 +15,15 @@ For programmatic usage:
 """
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(dotenv_path=_REPO_ROOT / ".env", override=False)
+load_dotenv(dotenv_path=_REPO_ROOT / ".env.local", override=False)
 
 from app.agents.aggregator import root_agent
 

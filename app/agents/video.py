@@ -1,7 +1,7 @@
 """
 Video Agent - Local video analysis.
 
-This agent uses deterministic pre-model routing for Groq compatibility.
+This agent uses deterministic pre-model routing for compatibility.
 """
 
 from __future__ import annotations

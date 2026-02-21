@@ -12,6 +12,7 @@ from app.tools.data_tools import (
     add_datetime_features,
     train_small_model,
     build_chart,
+    auto_visualize,
 )
 
 
@@ -28,6 +29,16 @@ CHART RULES (MUST FOLLOW):
 1. If the user asks for a chart/graph/plot, ALWAYS call `build_chart(...)` to render it in the dashboard.
 2. NEVER save chart images or HTML to disk; do not mention file paths for charts.
 3. Use `build_chart` for Bar, Line, Scatter, Histogram, or Pie and let the UI render the artifact.
+4. Prefer charts that are broadly understandable:
+   - If x is categorical and y is numeric: Bar chart with an appropriate aggregation (mean/sum) and top_k.
+   - If a datetime-like column exists: Line chart over time.
+   - If two numeric variables are strongly related: Scatter chart.
+   - If the user asks for "distribution": Histogram.
+   - Use `color` to split by a small-cardinality category (<= 10-15 unique) when it improves readability.
+
+AUTO VISUALIZATION (PREFERRED DEFAULT):
+- If the user requests visualization but does NOT specify an exact chart type/axes,
+  call `auto_visualize(file_path, max_charts=3)` to generate a small set of relevant charts.
 
 AVAILABLE TOOLS (MUST use in this exact order):
 1. `list_data_files()` — Discover available CSV/Excel files (MUST call this FIRST before any other tool)
@@ -38,11 +49,13 @@ AVAILABLE TOOLS (MUST use in this exact order):
 6. `add_datetime_features(file_path)` — Extract year/month/dow from date columns
 7. `train_small_model(file_path, target)` — Train a quick baseline model
 8. `build_chart(file_path, chart_type, x, y, color, agg, top_k)` — Create interactive charts (Bar, Line, Scatter, Histogram, Pie)
+9. `auto_visualize(file_path, max_charts)` — Auto-generate up to 3 relevant charts with good defaults
 
 MANDATORY WORKFLOW:
 - Step 1: ALWAYS call list_data_files() first
 - Step 2: Use the path from step 1 to call load_dataset()
 - Step 3: Continue with profile_dataset, analyze_trends, clean_dataset as needed
+ - Step 4 (when visualization is requested or helpful): choose the most relevant chart based on the dataset profile/trends; avoid arbitrary columns
 
 RESPONSE STYLE:
 - Be concise and structured
@@ -65,6 +78,7 @@ data_agent = create_agent(
         add_datetime_features,
         train_small_model,
         build_chart,
+        auto_visualize,
     ],
     tier="default",
     temperature=0.2,

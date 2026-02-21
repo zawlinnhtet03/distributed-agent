@@ -1,7 +1,7 @@
 [project]
 name = "sharded-retrieval-system"
 version = "0.1.0"
-description = "Sharded Multi-Agent Retrieval System using Google ADK with Groq"
+description = "Sharded Multi-Agent Retrieval System using Google ADK"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

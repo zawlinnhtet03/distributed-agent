@@ -13,15 +13,13 @@ litellm.suppress_debug_info = True
 
 load_dotenv()
 
-groq_api_key = os.getenv("GROQ_API_KEY")
-if not groq_api_key:
-    raise ValueError("Missing GROQ_API_KEY")
+mistral_api_key = os.getenv("MISTRAL_API_KEY")
+if not mistral_api_key:
+    raise ValueError("Missing MISTRAL_API_KEY")
 
 llm_model = LiteLlm(
-    model="openai/llama-3.1-8b-instant",
-    # model="openai/meta-llama/llama-4-scout-17b-16e-instruct",
-    api_key=groq_api_key,
-    api_base="https://api.groq.com/openai/v1" 
+    model="mistral/mistral-medium-latest",
+    api_key=mistral_api_key,
 )
 
 tavily_api_key = os.getenv("TAVILY_API_KEY")
