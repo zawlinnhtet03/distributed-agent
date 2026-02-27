@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from google.adk.agents import ParallelAgent, SequentialAgent
 from google.adk.models.llm_response import LlmResponse
@@ -54,6 +55,52 @@ If no delegated outputs are available, provide a concise direct response.
 
 _VIDEO_EXT = r"(?:mp4|mov|avi|mkv|webm)"
 _DATA_EXTS = {".csv", ".tsv", ".xlsx", ".xls"}
+
+_RESEARCH_KEYWORDS = (
+    "search", "web", "news", "research", "source", "citation",
+    "find", "look up", "lookup", "latest", "current", "recent",
+    "article", "report", "scrape", "crawl", "discover",
+    "breakthrough", "breakthroughs", "state of the art", "sota",
+)
+
+
+def _extract_explicit_required_agents(query: str) -> list[str]:
+    """Detect explicit user directives and required modalities deterministically."""
+    q = (query or "").lower()
+    required: list[str] = []
+
+    # Explicit research/source request
+    if (
+        "source" in q
+        or "sources" in q
+        or "url" in q
+        or "urls" in q
+        or any(token in q for token in _RESEARCH_KEYWORDS)
+    ):
+        required.append("gathering_layer")
+
+    # Explicit video request (supports test.mp4 and test,mp4 typo form)
+    if re.search(rf"[\w-]+[\.,]{_VIDEO_EXT}\b", q, flags=re.IGNORECASE) or any(
+        token in q for token in ("video", "frame", "clip", "analyze video", "analyse video")
+    ):
+        required.append("video")
+
+    # Explicit data/file request
+    if re.search(r"\.(csv|tsv|xlsx|xls)\b", q) or any(
+        token in q for token in (
+            "dataset", "data", "table", "csv", "excel", "loyalty.csv", "profile", "rows", "columns"
+        )
+    ):
+        required.append("data")
+
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for name in required:
+        if name not in seen:
+            seen.add(name)
+            deduped.append(name)
+    return deduped
 
 
 def _extract_latest_user_text(llm_request) -> str:
@@ -152,14 +199,7 @@ def _infer_agents_from_query(query: str) -> list[str]:
     ):
         agents.append("data")
 
-    if any(
-        token in q
-        for token in (
-            "search", "web", "news", "research", "source", "citation",
-            "find", "look up", "lookup", "latest", "current", "recent",
-            "article", "report", "scrape", "crawl", "discover",
-        )
-    ):
+    if any(token in q for token in _RESEARCH_KEYWORDS):
         agents.append("gathering_layer")
 
     return agents or ["aggregator"]
@@ -168,8 +208,12 @@ def _infer_agents_from_query(query: str) -> list[str]:
 def _extract_video_filename(text: str) -> str:
     if not text:
         return ""
-    match = re.search(rf"([A-Za-z0-9._-]+\.{_VIDEO_EXT})", text, flags=re.IGNORECASE)
-    return match.group(1) if match else ""
+    match = re.search(rf"([A-Za-z0-9._-]+)[\.,]({_VIDEO_EXT})\b", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    base = match.group(1)
+    ext = match.group(2)
+    return f"{base}.{ext}"
 
 
 def _extract_first_data_path(listing_text: str) -> str:
@@ -185,6 +229,33 @@ def _extract_first_data_path(listing_text: str) -> str:
     return ""
 
 
+def _extract_requested_data_path(query: str, listing_text: str) -> str:
+    """Pick the dataset explicitly requested by the user if present in listing."""
+    q = (query or "")
+    if not q or not listing_text:
+        return ""
+
+    requested_matches = re.findall(r"([A-Za-z0-9._-]+\.(?:csv|tsv|xlsx|xls))", q, flags=re.IGNORECASE)
+    if not requested_matches:
+        return ""
+
+    candidates: list[tuple[str, str]] = []
+    for line in listing_text.splitlines():
+        if "->" not in line:
+            continue
+        path = line.split("->", 1)[1].strip()
+        filename = os.path.basename(path).lower()
+        candidates.append((filename, path))
+
+    for req in requested_matches:
+        req_l = req.lower()
+        for filename, path in candidates:
+            if filename == req_l or req_l in filename:
+                return path
+
+    return ""
+
+
 def _run_video_task(query: str) -> str:
     filename = _extract_video_filename(query)
     if filename:
@@ -197,7 +268,7 @@ def _run_data_task(query: str) -> str:
     if "No data files found" in listing:
         return listing
 
-    selected_path = _extract_first_data_path(listing)
+    selected_path = _extract_requested_data_path(query, listing) or _extract_first_data_path(listing)
     if not selected_path:
         return listing
 
@@ -296,6 +367,7 @@ def _direct_aggregator_before_model(*args, **kwargs):
     )
 
     # ── Determine which agents to run ──
+    explicit_required = _extract_explicit_required_agents(f"{original_query} {llm_query} {state_query}")
     planned_agents = _extract_plan_agents(plan_text)
     inferred_from_state = _infer_agents_from_query(state_query) if state_query else []
     inferred_from_original = _infer_agents_from_query(original_query) if original_query else []
@@ -304,14 +376,14 @@ def _direct_aggregator_before_model(*args, **kwargs):
     # Merge all sources: planned + inferred from state + inferred from original + inferred from raw query
     seen: set[str] = set()
     agents: list[str] = []
-    for name in planned_agents + inferred_from_state + inferred_from_original + inferred_from_llm:
+    for name in explicit_required + planned_agents + inferred_from_state + inferred_from_original + inferred_from_llm:
         if name not in seen and name != "aggregator":
             seen.add(name)
             agents.append(name)
 
     # SAFETY NET: If planner only picked data but query has research keywords, force gathering_layer
     combined_text = f"{original_query} {llm_query}".lower()
-    research_keywords = ["research", "news", "search", "web", "latest", "current", "trend", "article"]
+    research_keywords = ["research", "news", "search", "web", "latest", "current", "trend", "article", "breakthrough", "breakthroughs"]
     data_keywords = ["csv", "dataset", "file", "analyze", "data"]
     has_research = any(kw in combined_text for kw in research_keywords)
     has_data = any(kw in combined_text for kw in data_keywords)
@@ -327,11 +399,28 @@ def _direct_aggregator_before_model(*args, **kwargs):
     if not agents:
         agents = _infer_agents_from_query(f"{state_query} {llm_query}")
 
+    # Mixed-intent hard guardrail: for prompts that ask for BOTH current/web research
+    # and video analysis, force both agents even if planner/state extraction is partial.
+    combined_for_guardrail = f"{query_for_files} {query} {plan_text}".lower()
+    has_video_intent = (
+        bool(re.search(rf"[\w-]+[\.,]{_VIDEO_EXT}\b", combined_for_guardrail, flags=re.IGNORECASE))
+        or any(token in combined_for_guardrail for token in ("video", "frame", "clip", "uploaded"))
+    )
+    has_research_intent = any(token in combined_for_guardrail for token in _RESEARCH_KEYWORDS)
+
+    if has_video_intent and has_research_intent:
+        if "video" not in agents:
+            logger.warning("[aggregator] FORCE: Adding video (mixed video+research intent detected)")
+            agents.append("video")
+        if "gathering_layer" not in agents:
+            logger.warning("[aggregator] FORCE: Adding gathering_layer (mixed video+research intent detected)")
+            agents.append("gathering_layer")
+
     runnable = [a for a in agents if a in {"video", "data", "gathering_layer"}]
 
     logger.info(
-        "[aggregator] planned=%s  inferred_state=%s  inferred_original=%s  inferred_llm=%s  final_runnable=%s",
-        planned_agents, inferred_from_state, inferred_from_original, inferred_from_llm, runnable,
+        "[aggregator] explicit=%s planned=%s inferred_state=%s inferred_original=%s inferred_llm=%s final_runnable=%s",
+        explicit_required, planned_agents, inferred_from_state, inferred_from_original, inferred_from_llm, runnable,
     )
     logger.info("[aggregator] query(sanitized)=%r  query_for_files(original)=%r", query[:120], query_for_files[:120])
 
@@ -341,7 +430,9 @@ def _direct_aggregator_before_model(*args, **kwargs):
 
     sections: list[str] = []
     executed_agents: list[str] = []
-    for agent_name in runnable:
+    results_by_agent: dict[str, str] = {}
+
+    def _execute_one(agent_name: str) -> tuple[str, str, bool]:
         logger.info("[aggregator] ===== STARTING %s =====", agent_name)
         try:
             if agent_name == "video":
@@ -352,13 +443,27 @@ def _direct_aggregator_before_model(*args, **kwargs):
                 output = _run_gathering_task(query)
             else:
                 output = f"Unknown agent: {agent_name}"
-            executed_agents.append(agent_name)
             logger.info("[aggregator] ===== COMPLETED %s (output len=%d) =====", agent_name, len(output))
+            return agent_name, output, False
         except Exception as exc:  # noqa: BLE001
             logger.error("[aggregator] ===== FAILED %s: %s =====", agent_name, exc)
-            output = f"Execution error in {agent_name}: {exc}"
-            executed_agents.append(f"{agent_name}(failed)")
-        sections.append(f"[{agent_name}]\n{output}")
+            return agent_name, f"Execution error in {agent_name}: {exc}", True
+
+    max_workers = max(1, min(len(runnable), 4))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_agent = {executor.submit(_execute_one, agent_name): agent_name for agent_name in runnable}
+        for future in as_completed(future_to_agent):
+            agent_name = future_to_agent[future]
+            try:
+                name, output, failed = future.result()
+            except Exception as exc:  # noqa: BLE001
+                name, output, failed = agent_name, f"Execution error in {agent_name}: {exc}", True
+            results_by_agent[name] = output
+            executed_agents.append(f"{name}(failed)" if failed else name)
+
+    # Preserve deterministic section order based on resolved runnable list
+    for agent_name in runnable:
+        sections.append(f"[{agent_name}]\n{results_by_agent.get(agent_name, f'Missing output for {agent_name}')}")
 
     logger.info("[aggregator] Executed agents: %s", executed_agents)
 

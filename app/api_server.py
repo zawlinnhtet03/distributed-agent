@@ -545,10 +545,13 @@ async def run_sse(request: Request):
                                                     break
 
                                     if tool_texts:
+                                        joined_tool_text = "\n".join(tool_texts)
+                                        if joined_tool_text:
+                                            full_text.append(joined_tool_text)
                                         tool_payload = {
                                             "type": "agent_message",
                                             "author": str(author),
-                                            "content": {"parts": [{"text": "\n".join(tool_texts)}]},
+                                            "content": {"parts": [{"text": joined_tool_text}]},
                                         }
                                         yield f"data: {json.dumps(tool_payload, ensure_ascii=False)}\n\n"
                                         await asyncio.sleep(0)

@@ -145,6 +145,7 @@ export default function DashboardSimple() {
   const [userId] = useState("ui_user");
   const [error, setError] = useState("");
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
+  const traceEventsRef = useRef<TraceEvent[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [artifactDebug, setArtifactDebug] = useState<ArtifactDebugState>({ markersSeen: 0, parsedOk: 0, parseFailed: 0 });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -458,6 +459,7 @@ export default function DashboardSimple() {
     setExpandedHistoryEntryId(null);
     setError("");
     setTraceEvents([]);
+    traceEventsRef.current = [];
     setArtifacts([]);
     setArtifactDebug({ markersSeen: 0, parsedOk: 0, parseFailed: 0 });
     agentBufferRef.current = {};
@@ -607,10 +609,21 @@ export default function DashboardSimple() {
 
             if (evt?.error) {
               const msg = String(evt.error);
-              setTraceEvents(prev => [
-                ...prev,
-                { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, type: "error", author: author || "server", text: msg, ts: Date.now() },
-              ]);
+              setTraceEvents(prev => {
+                const errEvent: TraceEvent = {
+                  id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                  type: "error",
+                  author: author || "server",
+                  text: msg,
+                  ts: Date.now(),
+                };
+                const next = [
+                  ...prev,
+                  errEvent,
+                ];
+                traceEventsRef.current = next;
+                return next;
+              });
               setError(msg);
               setFinalAnswer(msg);
               setIsProcessing(false);
@@ -629,6 +642,7 @@ export default function DashboardSimple() {
               };
               setTraceEvents(prev => {
                 const next = [...prev, newEvent];
+                traceEventsRef.current = next;
                 updateSharedState({ traceEvents: next });
                 return next;
               });
@@ -648,6 +662,10 @@ export default function DashboardSimple() {
 
                 // If the server marks the Guardian as the final author, treat it as Task Complete output.
                 if (agentKey === "Guardian") {
+                  guardianAnswerRef.current = finalText;
+                  setGuardianAnswer(finalText);
+                  updateSharedState({ guardianAnswer: finalText });
+                } else if (!guardianAnswerRef.current) {
                   guardianAnswerRef.current = finalText;
                   setGuardianAnswer(finalText);
                   updateSharedState({ guardianAnswer: finalText });
@@ -704,6 +722,7 @@ export default function DashboardSimple() {
               };
               setTraceEvents(prev => {
                 const next = [...prev, newEvent];
+                traceEventsRef.current = next;
                 updateSharedState({ traceEvents: next });
                 return next;
               });
@@ -736,7 +755,7 @@ export default function DashboardSimple() {
         // Save to shared state for Advanced View monitoring
         updateSharedState({
           agentStatuses: Object.fromEntries(AGENTS.map(a => [a.key, agentStatuses[a.key] || "idle"])),
-          traceEvents,
+          traceEvents: traceEventsRef.current,
           isProcessing: false,
           guardianAnswer: taskComplete ? stripPlanSection(taskComplete) : finalResponse,
           sessionId: effectiveSessionId,
@@ -750,9 +769,18 @@ export default function DashboardSimple() {
           response: (taskComplete ? stripPlanSection(taskComplete) : finalResponse) || "",
           timestamp: new Date(),
           agentActivity: Array.from(activeAgentsRef.current),
-          trace: traceEvents,
+          trace: traceEventsRef.current,
         };
-        pendingHistoryRef.current = newEntry;
+
+        setHistoryBySession(prev => {
+          const sid = newEntry.sessionId;
+          const next = {
+            ...prev,
+            [sid]: [newEntry, ...(prev[sid] ?? [])],
+          };
+          persistHistoryBySession(next);
+          return next;
+        });
       }
       
       AGENTS.forEach(a => updateAgentStatus(a.key, "idle"));
@@ -1509,6 +1537,78 @@ export default function DashboardSimple() {
                           <div className="text-xs font-semibold text-white/60 mb-2">You</div>
                           <div className="whitespace-pre-wrap break-words text-sm text-white/80">{entry.query}</div>
                         </div>
+
+                        {stripPlanSection(entry.response).trim() && (
+                          <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
+                            <div className="border-b border-white/10 px-4 py-3 flex items-center gap-2 text-[12px] font-semibold tracking-wide text-white/70">
+                              <span className="text-emerald-400 text-sm">✓</span>
+                              <span>Task Complete</span>
+                            </div>
+                            <div className="p-4">
+                              {(() => {
+                                const taskText = stripPlanSection(entry.response);
+                                const normalized = normalizeForMarkdown(taskText);
+                                const shouldRenderMarkdown =
+                                  isLikelyMarkdown(normalized) || taskText.includes("**") || taskText.includes("```") || /[•‣◦]/.test(taskText);
+
+                                if (!shouldRenderMarkdown) {
+                                  return (
+                                    <div className="whitespace-pre-wrap break-words text-sm leading-6 text-white/85">
+                                      {taskText}
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <article className="max-w-none text-sm leading-6 text-white/85">
+                                    <ReactMarkdown
+                                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                                      components={{
+                                        a: ({ href, children }) => (
+                                          <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">
+                                            {children}
+                                          </a>
+                                        ),
+                                        img: ({ src, alt }) => {
+                                          const s = String(src ?? "").trim();
+                                          if (!s) return null;
+                                          return <img src={s} alt={alt ?? ""} className="max-w-full rounded-lg border border-white/10" />;
+                                        },
+                                        p: ({ children }) => (
+                                          <p className="my-2">{children}</p>
+                                        ),
+                                        ul: ({ children }) => (
+                                          <ul className="my-2 list-disc pl-5 marker:text-cyan-400">{children}</ul>
+                                        ),
+                                        ol: ({ children }) => (
+                                          <ol className="my-2 list-decimal pl-5 marker:text-cyan-400">{children}</ol>
+                                        ),
+                                        li: ({ children }) => (
+                                          <li className="my-1">{children}</li>
+                                        ),
+                                        pre: ({ children }) => (
+                                          <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/40 p-3">
+                                            {children}
+                                          </pre>
+                                        ),
+                                        code: ({ children }) => (
+                                          <code className="break-words">{children}</code>
+                                        ),
+                                        table: ({ children }) => (
+                                          <div className="overflow-x-auto">
+                                            <table>{children}</table>
+                                          </div>
+                                        ),
+                                      }}
+                                    >
+                                      {normalized}
+                                    </ReactMarkdown>
+                                  </article>
+                                );
+                              })()}
+                            </div>
+                          </div>
+                        )}
 
                         {entry.trace?.length ? (
                           <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
